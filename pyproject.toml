@@ -103,6 +103,7 @@ build-backend = "setuptools.build_meta"
 [dependency-groups]
 dev = [
     "jupyter>=1.1.1",
+    "torchinfo>=1.8.0",
 ]
 
 [tool.ruff]
