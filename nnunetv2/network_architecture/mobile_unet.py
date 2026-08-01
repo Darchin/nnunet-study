@@ -1,5 +1,5 @@
 from functools import partial
-from typing import Sequence, Any, Optional
+from typing import Sequence, Any, Optional, Literal
 
 import torch
 import torch.nn as nn
@@ -30,6 +30,8 @@ class InvertedBottleneckBlock(nn.Module):
         stride: _size_any_t = 1,
         normalization: ModuleFactory = nn.Identity,
         activation: ModuleFactory = nn.Identity,
+        se_reduction: Optional[float] = None,
+        se_placement: Optional[Literal["in", "mid", "out"]] = None,
     ):
         super().__init__()
 
@@ -42,6 +44,7 @@ class InvertedBottleneckBlock(nn.Module):
             out_channels=hidden_channels,
             normalization=normalization,
             activation=activation,
+            se_reduction=se_reduction if se_placement == "in" else None,
         )
 
         self.dw_conv = ConvBlock(
@@ -54,6 +57,7 @@ class InvertedBottleneckBlock(nn.Module):
             groups=hidden_channels,
             normalization=normalization,
             activation=activation,
+            se_reduction=se_reduction if se_placement == "mid" else None,
         )
 
         self.pw_conv_out = ConvBlock(
@@ -61,6 +65,7 @@ class InvertedBottleneckBlock(nn.Module):
             in_channels=hidden_channels,
             out_channels=out_channels,
             normalization=normalization,
+            se_reduction=se_reduction if se_placement == "out" else None,
         )
 
         self._can_add_identity = all(s == 1 for s in _ensure_ntuple(stride, ndim)) and (
@@ -90,6 +95,8 @@ class EncoderStage(nn.Module):
         stride: _size_any_t,
         normalization: ModuleFactory,
         activation: ModuleFactory,
+        se_reduction: Optional[float],
+        se_placement: Optional[Literal["in", "mid", "out"]],
         depth: int,
     ):
         super().__init__()
@@ -107,6 +114,8 @@ class EncoderStage(nn.Module):
                 stride,
                 normalization,
                 activation,
+                se_reduction,
+                se_placement,
             )
         )
 
@@ -121,6 +130,8 @@ class EncoderStage(nn.Module):
                     1,
                     normalization,
                     activation,
+                    se_reduction,
+                    se_placement,
                 )
                 for _ in range(depth - 1)
             ]
@@ -146,6 +157,8 @@ class Encoder(nn.Module):
         strides: Sequence[_size_any_t],
         normalization: ModuleFactory,
         activation: ModuleFactory,
+        se_reduction: Optional[float],
+        se_placement: Optional[Literal["in", "mid", "out"]],
         depths: Sequence[int],
     ):
         super().__init__()
@@ -175,6 +188,8 @@ class Encoder(nn.Module):
                     strides[i],
                     normalization,
                     activation,
+                    se_reduction,
+                    se_placement,
                     depths[i],
                 )
             )
@@ -330,6 +345,9 @@ class MobileUNetConfig:
     act_kwargs: InitVar[dict[str, Any]]
     activation: ModuleFactory = field(init=False)
 
+    se_reduction: Optional[float] = None
+    se_placement: Optional[Literal["in", "mid", "out"]] = None
+
     encoder_depths: Sequence[int]
     decoder_depths: Sequence[int]
 
@@ -350,6 +368,8 @@ class MobileUNetConfig:
 
         self.normalization = partial(norm_layer, **norm_kwargs)
         self.activation = partial(act_layer, **act_kwargs)
+
+        assert self.se_placement in ["in", "mid", "out", None]
 
         assert len(self.encoder_depths) == self.num_stages
         assert len(self.decoder_depths) == self.num_stages - 1
@@ -376,6 +396,8 @@ class MobileUNet(nn.Module):
             config.strides,
             config.normalization,
             config.activation,
+            config.se_reduction,
+            config.se_placement,
             config.encoder_depths,
         )
 
