@@ -121,6 +121,7 @@ class nnUNetTrainer(object):
         logger_config = {"plans": plans, "configuration": configuration, "fold": fold, "dataset": dataset_json}
         self.plans_manager = PlansManager(plans)
         self.configuration_manager = self.plans_manager.get_configuration(configuration)
+        self.configuration_manager.validate_required_for_training(configuration)
         self.configuration_name = configuration
         self.dataset_json = dataset_json
         self.fold = fold
@@ -185,16 +186,14 @@ class nnUNetTrainer(object):
         ### placeholders
         self.dataloader_train = self.dataloader_val = None  # see on_train_start
 
-        ### initializing stuff for remembering things and such
-        self._best_ema = None
-
         ### inference things
         self.inference_allowed_mirroring_axes = None  # this variable is set in
         # self.configure_rotation_dummyDA_mirroring_and_inital_patch_size and will be saved in checkpoints
 
         ### checkpoint saving stuff
-        self.save_every = 50
+        self.checkpoint_interval = 50
         self.disable_checkpointing = False
+        self.disable_train_val = False
 
         self.was_initialized = False
 
@@ -984,12 +983,8 @@ class nnUNetTrainer(object):
         # dirty hack because on_epoch_end increments the epoch counter and this is executed afterwards.
         # This will lead to the wrong current epoch to be stored
         self.current_epoch -= 1
-        self.save_checkpoint(join(self.output_folder, "checkpoint_final.pth"))
+        self.save_checkpoint(join(self.output_folder, "checkpoint_last.pth"))
         self.current_epoch += 1
-
-        # now we can delete latest
-        if self.local_rank == 0 and isfile(join(self.output_folder, "checkpoint_latest.pth")):
-            os.remove(join(self.output_folder, "checkpoint_latest.pth"))
 
         # shut down dataloaders
         old_stdout = sys.stdout
@@ -1170,25 +1165,20 @@ class nnUNetTrainer(object):
         self.logger.log('epoch_end_timestamps', time(), self.current_epoch)
 
         self.print_to_log_file('train_loss', np.round(self.logger.get_value('train_losses', step=-1), decimals=4))
-        self.print_to_log_file('val_loss', np.round(self.logger.get_value('val_losses', step=-1), decimals=4))
-        self.print_to_log_file('Pseudo dice', [np.round(i, decimals=4) for i in
-                                               self.logger.get_value('dice_per_class_or_region', step=-1)])
+        if not self.disable_train_val:
+            self.print_to_log_file('val_loss', np.round(self.logger.get_value('val_losses', step=-1), decimals=4))
+            self.print_to_log_file('Pseudo dice', [np.round(i, decimals=4) for i in
+                                                   self.logger.get_value('dice_per_class_or_region', step=-1)])
         self.print_to_log_file(
             f"Epoch time: {np.round(self.logger.get_value('epoch_end_timestamps', step=-1) - self.logger.get_value('epoch_start_timestamps', step=-1), decimals=2)} s")
 
         # handling periodic checkpointing
         current_epoch = self.current_epoch
-        if (current_epoch + 1) % self.save_every == 0 and current_epoch != (self.num_epochs - 1):
-            self.save_checkpoint(join(self.output_folder, 'checkpoint_latest.pth'))
-
-        # handle 'best' checkpointing. ema_fg_dice is computed by the logger and can be accessed like this
-        if self._best_ema is None or self.logger.get_value('ema_fg_dice', step=-1) > self._best_ema:
-            self._best_ema = self.logger.get_value('ema_fg_dice', step=-1)
-            self.print_to_log_file(f"Yayy! New best EMA pseudo Dice: {np.round(self._best_ema, decimals=4)}")
-            self.save_checkpoint(join(self.output_folder, 'checkpoint_best.pth'))
+        if (current_epoch + 1) % self.checkpoint_interval == 0 and current_epoch != (self.num_epochs - 1):
+            self.save_checkpoint(join(self.output_folder, 'checkpoint_last.pth'))
 
         if self.local_rank == 0:
-            self.logger.plot_progress_png(self.output_folder)
+            self.logger.plot_progress_png(self.output_folder, include_validation=not self.disable_train_val)
 
         self.current_epoch += 1
 
@@ -1207,7 +1197,6 @@ class nnUNetTrainer(object):
                     'optimizer_state': self.optimizer.state_dict(),
                     'grad_scaler_state': self.grad_scaler.state_dict() if self.grad_scaler is not None else None,
                     'logging': self.logger.get_checkpoint(),
-                    '_best_ema': self._best_ema,
                     'current_epoch': self.current_epoch + 1,
                     'init_args': self.my_init_kwargs,
                     'trainer_name': self.__class__.__name__,
@@ -1217,12 +1206,12 @@ class nnUNetTrainer(object):
             else:
                 self.print_to_log_file('No checkpoint written, checkpointing is disabled')
 
-    def load_checkpoint(self, checkpoint: Union[dict, str]) -> None:
+    def load_checkpoint(self, filename_or_checkpoint: Union[dict, str]) -> None:
         if not self.was_initialized:
             self.initialize()
 
-        if isinstance(checkpoint, str):
-            checkpoint = torch.load(checkpoint, map_location=self.device, weights_only=False)
+        if isinstance(filename_or_checkpoint, str):
+            checkpoint = torch.load(filename_or_checkpoint, map_location=self.device, weights_only=False)
         # if state dict comes from nn.DataParallel but we use non-parallel model here then the state dict keys do not
         # match. Use heuristic to make it match
         new_state_dict = {}
@@ -1235,7 +1224,6 @@ class nnUNetTrainer(object):
         self.my_init_kwargs = checkpoint['init_args']
         self.current_epoch = checkpoint['current_epoch']
         self.logger.load_checkpoint(checkpoint['logging'])
-        self._best_ema = checkpoint['_best_ema']
         self.inference_allowed_mirroring_axes = checkpoint[
             'inference_allowed_mirroring_axes'] if 'inference_allowed_mirroring_axes' in checkpoint.keys() else self.inference_allowed_mirroring_axes
 
@@ -1255,7 +1243,7 @@ class nnUNetTrainer(object):
             if checkpoint['grad_scaler_state'] is not None:
                 self.grad_scaler.load_state_dict(checkpoint['grad_scaler_state'])
 
-    def perform_actual_validation(self, save_probabilities: bool = False):
+    def perform_actual_validation(self, save_probabilities: bool = False, enable_tta: bool = True):
         self.set_deep_supervision_enabled(False)
         self.network.eval()
 
@@ -1269,7 +1257,7 @@ class nnUNetTrainer(object):
                                    "forward pass (where compile is triggered) already has deep supervision disabled. "
                                    "This is exactly what we need in perform_actual_validation")
 
-        predictor = nnUNetPredictor(tile_step_size=0.5, use_gaussian=True, use_mirroring=True,
+        predictor = nnUNetPredictor(tile_step_size=0.5, use_gaussian=True, use_mirroring=enable_tta,
                                     perform_everything_on_device=True, device=self.device, verbose=False,
                                     verbose_preprocessing=False, allow_tqdm=False)
         predictor.manual_initialization(self.network, self.plans_manager, self.configuration_manager, None,
@@ -1411,7 +1399,7 @@ class nnUNetTrainer(object):
             self.print_to_log_file("Mean Validation Dice: ", (metrics['foreground_mean']["Dice"]),
                                    also_print_to_console=True)
 
-        self.set_deep_supervision_enabled(True)
+        self.set_deep_supervision_enabled(self.enable_deep_supervision)
         compute_gaussian.cache_clear()
 
     def run_training(self):
@@ -1426,12 +1414,13 @@ class nnUNetTrainer(object):
                 train_outputs.append(self.train_step(next(self.dataloader_train)))
             self.on_train_epoch_end(train_outputs)
 
-            with torch.no_grad():
-                self.on_validation_epoch_start()
-                val_outputs = []
-                for batch_id in range(self.num_val_iterations_per_epoch):
-                    val_outputs.append(self.validation_step(next(self.dataloader_val)))
-                self.on_validation_epoch_end(val_outputs)
+            if not self.disable_train_val:
+                with torch.no_grad():
+                    self.on_validation_epoch_start()
+                    val_outputs = []
+                    for batch_id in range(self.num_val_iterations_per_epoch):
+                        val_outputs.append(self.validation_step(next(self.dataloader_val)))
+                    self.on_validation_epoch_end(val_outputs)
 
             self.on_epoch_end()
 
