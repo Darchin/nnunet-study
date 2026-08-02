@@ -4,7 +4,7 @@ from typing import Any
 from torch.nn.common_types import _size_any_t
 
 
-def _ensure_ntuple(x: Any, n: int):
+def ensure_ntuple(x: Any, n: int):
     if isinstance(x, Iterable):
         x = tuple(x)
         assert (
@@ -15,7 +15,7 @@ def _ensure_ntuple(x: Any, n: int):
 
 
 def compute_padding(ndim: int, kernel_size: _size_any_t) -> _size_any_t:
-    kernel_size = _ensure_ntuple(kernel_size, ndim)
+    kernel_size = ensure_ntuple(kernel_size, ndim)
     padding = [k // 2 for k in kernel_size]
     return padding
 
@@ -23,7 +23,7 @@ def compute_padding(ndim: int, kernel_size: _size_any_t) -> _size_any_t:
 def compute_output_padding(
     ndim: int, kernel_size: _size_any_t, stride: _size_any_t
 ) -> _size_any_t:
-    kernel_size = _ensure_ntuple(kernel_size, ndim)
-    stride = _ensure_ntuple(stride, ndim)
+    kernel_size = ensure_ntuple(kernel_size, ndim)
+    stride = ensure_ntuple(stride, ndim)
     output_padding = [(k % 2) * (s - 1) for k, s in zip(kernel_size, stride)]
     return output_padding
