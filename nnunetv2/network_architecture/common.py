@@ -3,32 +3,8 @@ from typing import Callable, Optional
 import torch
 import torch.nn as nn
 from torch.nn.common_types import _size_any_t
-
-ModuleFactory = Callable[..., nn.Module]
-
-
-def AdaptiveAvgPoolNd(
-    N: int, *args, **kwargs
-) -> nn.AdaptiveAvgPool1d | nn.AdaptiveAvgPool2d | nn.AdaptiveAvgPool3d:
-    return [nn.AdaptiveAvgPool1d, nn.AdaptiveAvgPool2d, nn.AdaptiveAvgPool3d][N - 1](
-        *args, **kwargs
-    )
-
-
-def ConvNd(N: int, *args, **kwargs) -> nn.Conv1d | nn.Conv2d | nn.Conv3d:
-    return [nn.Conv1d, nn.Conv2d, nn.Conv3d][N - 1](*args, **kwargs)
-
-
-def ConvTransposeNd(
-    N: int, *args, **kwargs
-) -> nn.ConvTranspose1d | nn.ConvTranspose2d | nn.ConvTranspose3d:
-    return [nn.ConvTranspose1d, nn.ConvTranspose2d, nn.ConvTranspose3d][N - 1](
-        *args, **kwargs
-    )
-
-
-def LinearUpsampleNd(N: int, *args, **kwargs) -> nn.Upsample:
-    return nn.Upsample(mode=["linear", "bilinear", "trilinear"][N - 1], *args, **kwargs)
+from nnunetv2.network_architecture.nd import AdaptiveAvgPoolNd, ConvNd
+from nnunetv2.network_architecture.types import ModuleFactory
 
 
 class SqueezeAndExcitationBlock(nn.Module):
@@ -48,7 +24,7 @@ class SqueezeAndExcitationBlock(nn.Module):
     def reset_parameters(self):
         nn.init.kaiming_uniform_(self.pw1.weight)
         nn.init.zeros_(self.pw1.bias)
-        
+
         nn.init.zeros_(self.pw2.weight)
         nn.init.zeros_(self.pw2.bias)
 
@@ -77,7 +53,7 @@ class ConvBlock(nn.Module):
     ):
         super().__init__()
 
-        self.norm = normalization(out_channels)
+        self.norm = normalization(ndim, out_channels)
         self.act = activation()
 
         _has_bias = bias or isinstance(self.norm, nn.Identity)
