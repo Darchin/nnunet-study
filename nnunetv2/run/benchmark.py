@@ -356,9 +356,9 @@ def benchmark_entry() -> None:
         "-p",
         "--plan",
         type=str,
-        default="MobileUNetPlanner",
+        default="MobileUNetPlans",
         help="Plans identifier to discover under nnUNet_preprocessed, or a direct path to a plans JSON file. "
-        "Default: MobileUNetPlanner",
+        "Default: MobileUNetPlans",
     )
     parser.add_argument(
         "-c",
