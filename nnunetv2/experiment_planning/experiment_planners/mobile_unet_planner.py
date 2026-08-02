@@ -4,10 +4,6 @@ from typing import Dict, List, Tuple, Union
 
 import numpy as np
 from batchgenerators.utilities.file_and_folder_operations import join, maybe_mkdir_p
-from dynamic_network_architectures.building_blocks.helper import (
-    convert_dim_to_conv_op,
-    get_matching_instancenorm,
-)
 
 from nnunetv2.experiment_planning.experiment_planners.default_experiment_planner import (
     ExperimentPlanner,
@@ -22,30 +18,30 @@ class MobileUNetPlanner(ExperimentPlanner):
             "stem_factor": 2,
             "post_stem_downsampling_stages": 4,
             "arch_kwargs": {
-                "encoder_n_blocks_per_stage": [2, 3, 3, 9, 3],
-                "decoder_n_blocks_per_stage": [1, 1, 1, 1],
-                "encoder_expansion_ratio": [2.0, 2.0, 4.0, 4.0, 4.0],
-                "decoder_expansion_ratio": 1.0,
+                "encoder_depths": [2, 3, 3, 9, 3],
+                "decoder_depths": [1, 1, 1, 1],
+                "encoder_expansion_ratios": [2.0, 2.0, 4.0, 4.0, 4.0],
+                "decoder_expansion_ratios": 1.0,
             },
         },
         "3x": {
             "stem_factor": 3,
             "post_stem_downsampling_stages": 3,
             "arch_kwargs": {
-                "encoder_n_blocks_per_stage": [3, 3, 9, 3],
-                "decoder_n_blocks_per_stage": [1, 1, 1],
-                "encoder_expansion_ratio": [2.0, 4.0, 4.0, 4.0],
-                "decoder_expansion_ratio": 1.0,
+                "encoder_depths": [3, 3, 9, 3],
+                "decoder_depths": [1, 1, 1],
+                "encoder_expansion_ratios": [2.0, 4.0, 4.0, 4.0],
+                "decoder_expansion_ratios": 1.0,
             },
         },
         "4x": {
             "stem_factor": 4,
             "post_stem_downsampling_stages": 3,
             "arch_kwargs": {
-                "encoder_n_blocks_per_stage": [3, 3, 9, 3],
-                "decoder_n_blocks_per_stage": [1, 1, 1],
-                "encoder_expansion_ratio": [2.0, 4.0, 4.0, 4.0],
-                "decoder_expansion_ratio": 1.0,
+                "encoder_depths": [3, 3, 9, 3],
+                "decoder_depths": [1, 1, 1],
+                "encoder_expansion_ratios": [2.0, 4.0, 4.0, 4.0],
+                "decoder_expansion_ratios": 1.0,
             },
         },
     }
@@ -236,46 +232,36 @@ class MobileUNetPlanner(ExperimentPlanner):
     def _architecture(
         self,
         dim: int,
-        n_stages: int,
+        num_stages: int,
         post_stem_downsampling_stages: int,
         stem_stride: List[int],
         stem_kernel_size: List[int],
         arch_kwargs_defaults: dict = None,
     ) -> dict:
-        conv_op = convert_dim_to_conv_op(dim)
-        norm = get_matching_instancenorm(conv_op)
         stage_strides = [[1] * dim] + [
             [2] * dim for _ in range(post_stem_downsampling_stages)
         ]
-        kernel_sizes = [[3] * dim for _ in range(n_stages)]
+        kernel_sizes = [[3] * dim for _ in range(num_stages)]
         arch_kwargs_defaults = (
             {} if arch_kwargs_defaults is None else dict(arch_kwargs_defaults)
         )
         arch_kwargs = {
-            "n_stages": n_stages,
-            "features_per_stage": None,
-            "conv_op": conv_op.__module__ + "." + conv_op.__name__,
+            "ndim": dim,
+            "num_stages": num_stages,
             "kernel_sizes": kernel_sizes,
             "strides": stage_strides,
-            "encoder_n_blocks_per_stage": None,
-            "decoder_n_blocks_per_stage": None,
-            "conv_bias": True,
-            "norm_op": norm.__module__ + "." + norm.__name__,
-            "norm_op_kwargs": {"eps": 1e-5, "affine": True},
-            "dropout_op": None,
-            "dropout_op_kwargs": None,
-            "nonlin": "torch.nn.ReLU",
-            "nonlin_kwargs": {"inplace": True},
-            "stem": {
-                "stride": stem_stride,
-                "kernel_size": stem_kernel_size,
-            },
+            "norm_layer": "nnunetv2.network_architecture.nd.InstanceNormNd",
+            "norm_kwargs": {},
+            "act_layer": "torch.nn.ReLU",
+            "act_kwargs": {"inplace": True},
+            "stem_kernel_size": stem_kernel_size,
+            "stem_stride": stem_stride,
         }
         arch_kwargs.update(arch_kwargs_defaults)
         return {
-            "network_class_name": "nnunetv2.training.network_architecture.mobile_unet.MobileUNet",
+            "network_class_name": "nnunetv2.network_architecture.mobile_unet.MobileUNet",
             "arch_kwargs": arch_kwargs,
-            "_kw_requires_import": ("conv_op", "norm_op", "dropout_op", "nonlin"),
+            "_kw_requires_import": ("norm_layer", "act_layer"),
         }
 
     def _base_configuration(self) -> dict:
@@ -340,7 +326,7 @@ class MobileUNetPlanner(ExperimentPlanner):
         stem_stride_list = [int(i) for i in stem_stride_transposed]
         stem_kernel_size = self.compute_stem_kernel_size(stem_stride_list)
 
-        n_stages = post_stem_downsampling_stages + 1
+        num_stages = post_stem_downsampling_stages + 1
 
         return {
             "inherits_from": "base",
@@ -359,7 +345,7 @@ class MobileUNetPlanner(ExperimentPlanner):
             "batch_dice": True,
             "architecture": self._architecture(
                 len(target_spacing_transposed),
-                n_stages,
+                num_stages,
                 post_stem_downsampling_stages,
                 stem_stride_list,
                 stem_kernel_size,
@@ -368,7 +354,7 @@ class MobileUNetPlanner(ExperimentPlanner):
             "trainer": dict(self.trainer_defaults),
             "required_for_training": [
                 "patch_size_multiplier",
-                "architecture.arch_kwargs.features_per_stage",
+                "architecture.arch_kwargs.channels",
             ],
         }
 
@@ -436,33 +422,33 @@ class BaselinePlanner(MobileUNetPlanner):
         "2x-s": {
             "inherits_from": "2x",
             "patch_size_multiplier": 6,
-            "features_per_stage": [32, 64, 128, 256, 512],
+            "channels": [32, 64, 128, 256, 512],
         },
         "2x-m": {
             "inherits_from": "2x",
             "patch_size_multiplier": 6,
-            "features_per_stage": [48, 96, 192, 384, 768],
+            "channels": [48, 96, 192, 384, 768],
         },
         "3x-s": {
             "inherits_from": "3x",
             "patch_size_multiplier": 8,
-            "features_per_stage": [64, 128, 256, 512],
+            "channels": [64, 128, 256, 512],
         },
         "3x-m": {
             "inherits_from": "3x",
             "patch_size_multiplier": 8,
-            "features_per_stage": [96, 192, 384, 768],
+            "channels": [96, 192, 384, 768],
         },
         "4x-s": {
             "inherits_from": "4x",
             "patch_size_multiplier": 6,
-            "features_per_stage": [64, 128, 256, 512],
+            "channels": [64, 128, 256, 512],
         },
         "4x-m": {
             "inherits_from": "4x",
             "patch_size_multiplier": 6,
-            "features_per_stage": [96, 192, 384, 768],
-        }
+            "channels": [96, 192, 384, 768],
+        },
     }
 
     def __init__(
@@ -490,7 +476,7 @@ class BaselinePlanner(MobileUNetPlanner):
             "patch_size_multiplier": preset["patch_size_multiplier"],
             "architecture": {
                 "arch_kwargs": {
-                    "features_per_stage": preset["features_per_stage"],
+                    "channels": preset["channels"],
                 },
             },
         }
