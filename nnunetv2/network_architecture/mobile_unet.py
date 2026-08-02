@@ -1,21 +1,21 @@
 from functools import partial
 from typing import Sequence, Any, Optional, Literal
+from dataclasses import dataclass, InitVar, field
 
 import torch
 import torch.nn as nn
-from torch.nn.common_types import _size_any_t
-from dataclasses import dataclass, InitVar, field
 
-from nnunetv2.network_architecture.common import (
-    ConvBlock,
+from nnunetv2.network_architecture.common import ConvBlock
+from nnunetv2.network_architecture.types import ModuleFactory, ShapeNd
+from nnunetv2.network_architecture.nd import (
     ConvTransposeNd,
     LinearUpsampleNd,
-    ModuleFactory,
 )
+from nnunetv2.network_architecture.cond_conv import CondPWConvBlock, Router
 from nnunetv2.network_architecture.utils import (
     compute_padding,
     compute_output_padding,
-    _ensure_ntuple,
+    ensure_ntuple,
 )
 
 
@@ -26,25 +26,40 @@ class InvertedBottleneckBlock(nn.Module):
         in_channels: int,
         out_channels: int,
         expansion_ratio: float,
-        kernel_size: _size_any_t = 1,
-        stride: _size_any_t = 1,
+        kernel_size: ShapeNd = 1,
+        stride: ShapeNd = 1,
         normalization: ModuleFactory = nn.Identity,
         activation: ModuleFactory = nn.Identity,
         se_reduction: Optional[float] = None,
         se_placement: Optional[Literal["in", "mid", "out"]] = None,
+        cc_num_experts: Optional[int] = None,
+        cc_router_kernel_size: Optional[ShapeNd] = None,
+        cc_router_stride: Optional[ShapeNd] = None,
     ):
         super().__init__()
 
         hidden_channels = round(expansion_ratio * in_channels)
         padding = compute_padding(ndim, kernel_size)
 
-        self.pw_conv_in = ConvBlock(
+        if cc_num_experts is not None:
+            self.router = Router(
+                ndim,
+                in_channels,
+                cc_router_kernel_size,
+                cc_router_stride,
+                cc_num_experts,
+            )
+        else:
+            self.router = None
+
+        self.pw_conv_in = CondPWConvBlock(
             ndim,
             in_channels=in_channels,
             out_channels=hidden_channels,
             normalization=normalization,
             activation=activation,
             se_reduction=se_reduction if se_placement == "in" else None,
+            cc_num_experts=cc_num_experts,
         )
 
         self.dw_conv = ConvBlock(
@@ -60,24 +75,30 @@ class InvertedBottleneckBlock(nn.Module):
             se_reduction=se_reduction if se_placement == "mid" else None,
         )
 
-        self.pw_conv_out = ConvBlock(
+        self.pw_conv_out = CondPWConvBlock(
             ndim,
             in_channels=hidden_channels,
             out_channels=out_channels,
             normalization=normalization,
             se_reduction=se_reduction if se_placement == "out" else None,
+            cc_num_experts=cc_num_experts,
         )
 
-        self._can_add_identity = all(s == 1 for s in _ensure_ntuple(stride, ndim)) and (
+        self._can_add_identity = all(s == 1 for s in ensure_ntuple(stride, ndim)) and (
             in_channels == out_channels
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         identity = x
 
-        x = self.pw_conv_in(x)
+        if self.router is not None:
+            scores = self.router(x)
+        else:
+            scores = None
+
+        x = self.pw_conv_in(x, scores)
         x = self.dw_conv(x)
-        x = self.pw_conv_out(x)
+        x = self.pw_conv_out(x, scores)
 
         if self._can_add_identity:
             x = x + identity
@@ -91,12 +112,15 @@ class EncoderStage(nn.Module):
         in_channels: int,
         out_channels: int,
         expansion_ratio: float,
-        kernel_size: _size_any_t,
-        stride: _size_any_t,
+        kernel_size: ShapeNd,
+        stride: ShapeNd,
         normalization: ModuleFactory,
         activation: ModuleFactory,
         se_reduction: Optional[float],
         se_placement: Optional[Literal["in", "mid", "out"]],
+        cc_num_experts: Optional[int],
+        cc_router_kernel_size: Optional[ShapeNd],
+        cc_router_stride: Optional[ShapeNd],
         depth: int,
     ):
         super().__init__()
@@ -116,6 +140,9 @@ class EncoderStage(nn.Module):
                 activation,
                 se_reduction,
                 se_placement,
+                cc_num_experts,
+                cc_router_kernel_size,
+                cc_router_stride,
             )
         )
 
@@ -132,6 +159,9 @@ class EncoderStage(nn.Module):
                     activation,
                     se_reduction,
                     se_placement,
+                    cc_num_experts,
+                    cc_router_kernel_size,
+                    cc_router_stride,
                 )
                 for _ in range(depth - 1)
             ]
@@ -148,17 +178,20 @@ class Encoder(nn.Module):
         self,
         ndim: int,
         num_features: int,
-        stem_kernel_size: _size_any_t,
-        stem_stride: _size_any_t,
+        stem_kernel_size: ShapeNd,
+        stem_stride: ShapeNd,
         num_stages: int,
         channels: Sequence[int],
         expansion_ratios: Sequence[float],
-        kernel_sizes: Sequence[_size_any_t],
-        strides: Sequence[_size_any_t],
+        kernel_sizes: Sequence[ShapeNd],
+        strides: Sequence[ShapeNd],
         normalization: ModuleFactory,
         activation: ModuleFactory,
         se_reduction: Optional[float],
         se_placement: Optional[Literal["in", "mid", "out"]],
+        cc_num_experts: Sequence[Optional[int]],
+        cc_router_kernel_size: Optional[ShapeNd],
+        cc_router_stride: Optional[ShapeNd],
         depths: Sequence[int],
     ):
         super().__init__()
@@ -190,6 +223,9 @@ class Encoder(nn.Module):
                     activation,
                     se_reduction,
                     se_placement,
+                    cc_num_experts[i],
+                    cc_router_kernel_size,
+                    cc_router_stride,
                     depths[i],
                 )
             )
@@ -213,8 +249,8 @@ class DecoderStage(nn.Module):
         in_channels: int,  # = decoder channels
         out_channels: int,  # = encoder channels
         expansion_ratio: float,
-        kernel_size: _size_any_t,
-        stride: _size_any_t,
+        kernel_size: ShapeNd,
+        stride: ShapeNd,
         normalization: ModuleFactory,
         activation: ModuleFactory,
         depth: int,
@@ -223,7 +259,7 @@ class DecoderStage(nn.Module):
 
         self.upsample = LinearUpsampleNd(
             ndim,
-            scale_factor=_ensure_ntuple(
+            scale_factor=ensure_ntuple(
                 stride, ndim
             ),  # non-float scale factors must be tuple (they can't be lists)
         )
@@ -272,13 +308,13 @@ class Decoder(nn.Module):
         self,
         ndim: int,
         num_classes: int,
-        stem_kernel_size: _size_any_t,
-        stem_stride: _size_any_t,
+        stem_kernel_size: ShapeNd,
+        stem_stride: ShapeNd,
         num_stages: int,
         channels: Sequence[int],
         expansion_ratios: Sequence[float],
-        kernel_sizes: Sequence[_size_any_t],
-        strides: Sequence[_size_any_t],
+        kernel_sizes: Sequence[ShapeNd],
+        strides: Sequence[ShapeNd],
         normalization: ModuleFactory,
         activation: ModuleFactory,
         depths: Sequence[int],
@@ -324,20 +360,22 @@ class Decoder(nn.Module):
 class MobileUNetConfig:
     ndim: int
 
-    num_features: int
+    # these two must match the nnU-Net hard-coded values for the architecture builder
+    input_channels: int
     num_classes: int
-    stem_kernel_size: _size_any_t
-    stem_stride: _size_any_t
+
+    stem_kernel_size: ShapeNd
+    stem_stride: ShapeNd
 
     num_stages: int
     channels: Sequence[int]
     encoder_expansion_ratios: float | Sequence[float]
     decoder_expansion_ratios: float | Sequence[float]
 
-    kernel_sizes: Sequence[_size_any_t]
-    strides: Sequence[_size_any_t]
+    kernel_sizes: Sequence[ShapeNd]
+    strides: Sequence[ShapeNd]
 
-    norm_layer: InitVar[type[nn.Module]]
+    norm_layer: InitVar[ModuleFactory]
     norm_kwargs: InitVar[dict[str, Any]]
     normalization: ModuleFactory = field(init=False)
 
@@ -345,21 +383,27 @@ class MobileUNetConfig:
     act_kwargs: InitVar[dict[str, Any]]
     activation: ModuleFactory = field(init=False)
 
-    se_reduction: Optional[float] = None
-    se_placement: Optional[Literal["in", "mid", "out"]] = None
-
     encoder_depths: Sequence[int]
     decoder_depths: Sequence[int]
 
+    se_reduction: Optional[float] = None
+    se_placement: Optional[Literal["in", "mid", "out"]] = None
+
+    cc_num_experts: Sequence[Optional[int]] = None
+    cc_router_kernel_size: Optional[ShapeNd] = None
+    cc_router_stride: Optional[ShapeNd] = None
+
+    deep_supervision: bool = False
+
     def __post_init__(self, norm_layer, norm_kwargs, act_layer, act_kwargs):
-        self.stem_kernel_size = _ensure_ntuple(self.stem_kernel_size, self.ndim)
-        self.stem_stride = _ensure_ntuple(self.stem_stride, self.ndim)
+        self.stem_kernel_size = ensure_ntuple(self.stem_kernel_size, self.ndim)
+        self.stem_stride = ensure_ntuple(self.stem_stride, self.ndim)
 
         assert len(self.channels) == self.num_stages
-        self.encoder_expansion_ratios = _ensure_ntuple(
+        self.encoder_expansion_ratios = ensure_ntuple(
             self.encoder_expansion_ratios, self.num_stages
         )
-        self.decoder_expansion_ratios = _ensure_ntuple(
+        self.decoder_expansion_ratios = ensure_ntuple(
             self.decoder_expansion_ratios, self.num_stages - 1
         )
 
@@ -371,8 +415,19 @@ class MobileUNetConfig:
 
         assert self.se_placement in ["in", "mid", "out", None]
 
+        if self.cc_num_experts is not None:
+            self.cc_num_experts = ensure_ntuple(self.cc_num_experts, self.num_stages)
+            assert self.cc_router_kernel_size is not None
+            assert self.cc_router_stride is not None
+        else:
+            self.cc_num_experts = [None] * self.num_stages
+
         assert len(self.encoder_depths) == self.num_stages
         assert len(self.decoder_depths) == self.num_stages - 1
+
+        assert (
+            self.deep_supervision == False
+        ), "Deep supervision is not supported with the Mobile U-Net architecture."
 
 
 class MobileUNet(nn.Module):
@@ -386,7 +441,7 @@ class MobileUNet(nn.Module):
 
         self.encoder = Encoder(
             config.ndim,
-            config.num_features,
+            config.input_channels,
             config.stem_kernel_size,
             config.stem_stride,
             config.num_stages,
@@ -398,6 +453,9 @@ class MobileUNet(nn.Module):
             config.activation,
             config.se_reduction,
             config.se_placement,
+            config.cc_num_experts,
+            config.cc_router_kernel_size,
+            config.cc_router_stride,
             config.encoder_depths,
         )
 
