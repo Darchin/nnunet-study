@@ -419,6 +419,11 @@ class MobileUNetPlanner(ExperimentPlanner):
 
 class BaselinePlanner(MobileUNetPlanner):
     _presets = {
+        "2x-t": {
+            "inherits_from": "2x",
+            "patch_size_multiplier": 6,
+            "channels": [16, 32, 64, 128, 256],
+        },
         "2x-s": {
             "inherits_from": "2x",
             "patch_size_multiplier": 6,
@@ -429,6 +434,11 @@ class BaselinePlanner(MobileUNetPlanner):
             "patch_size_multiplier": 6,
             "channels": [48, 96, 192, 384, 768],
         },
+        "3x-t": {
+            "inherits_from": "3x",
+            "patch_size_multiplier": 8,
+            "channels": [32, 64, 128, 256],
+        },
         "3x-s": {
             "inherits_from": "3x",
             "patch_size_multiplier": 8,
@@ -438,6 +448,11 @@ class BaselinePlanner(MobileUNetPlanner):
             "inherits_from": "3x",
             "patch_size_multiplier": 8,
             "channels": [96, 192, 384, 768],
+        },
+        "4x-t": {
+            "inherits_from": "4x",
+            "patch_size_multiplier": 6,
+            "channels": [32, 64, 128, 256],
         },
         "4x-s": {
             "inherits_from": "4x",
