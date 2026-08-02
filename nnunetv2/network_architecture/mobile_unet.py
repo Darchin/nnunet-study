@@ -474,6 +474,26 @@ class MobileUNet(nn.Module):
             config.decoder_depths,
         )
 
+        self.reset_parameters()
+
+    # We use zero-initialization on the final norm of each residual block (like ReZero)
+    def reset_parameters(self):
+        for stage in self.encoder.stages + self.decoder.stages:
+            for block in stage.blocks:
+                if block._can_add_identity:
+                    residual_norm = block.pw_conv_out.norm
+                    if not isinstance(residual_norm, nn.Identity):
+                        if (
+                            hasattr(residual_norm, "weight")
+                            and residual_norm.weight is not None
+                        ):
+                            nn.init.zeros_(residual_norm.weight)
+                        if (
+                            hasattr(residual_norm, "bias")
+                            and residual_norm.bias is not None
+                        ):
+                            nn.init.zeros_(residual_norm.bias)
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         x_enc: list[torch.Tensor] = self.encoder(x)
         out = self.decoder(x_enc)
