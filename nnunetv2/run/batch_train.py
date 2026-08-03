@@ -384,14 +384,14 @@ def parse_job_pair(value: str) -> JobPair:
     parts = value.split(",")
     if len(parts) != 2:
         raise argparse.ArgumentTypeError(
-            f"invalid job pair {value!r}; expected CONFIG,FOLD, for example 3x-s,0"
+            f"invalid job pair {value!r}; expected CONFIG,FOLD, for example mn-3x-s,0"
         )
 
     configuration = parts[0].strip()
     fold_text = parts[1].strip()
     if not configuration or not fold_text:
         raise argparse.ArgumentTypeError(
-            f"invalid job pair {value!r}; expected CONFIG,FOLD, for example 3x-s,0"
+            f"invalid job pair {value!r}; expected CONFIG,FOLD, for example mn-3x-s,0"
         )
 
     try:
@@ -767,7 +767,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         type=parse_job_pair,
         default=(),
         metavar="CONFIG,FOLD",
-        help="Additional individual jobs to schedule, for example: -i 3x-s,0 4x-m,1",
+        help="Additional individual jobs to schedule, for example: -i mn-3x-s,0 mn-4x-m,1",
     )
     parser.add_argument(
         "-e",
@@ -776,7 +776,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         type=parse_job_pair,
         default=(),
         metavar="CONFIG,FOLD",
-        help="Individual jobs to remove from the schedule, for example: -e 3x-s,0 4x-m,1",
+        help="Individual jobs to remove from the schedule, for example: -e mn-3x-s,0 mn-4x-m,1",
     )
     parser.add_argument(
         "--ddp",
