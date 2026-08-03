@@ -121,4 +121,5 @@ CLAUDE.md
 AGENTS.md
 
 nnUNet_*/
+Cleaned_results/
 *.ipynb
