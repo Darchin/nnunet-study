@@ -1,5 +1,5 @@
 import shutil
-from typing import Dict, List, Tuple, Union
+from collections.abc import Mapping, Sequence
 
 import numpy as np
 from batchgenerators.utilities.file_and_folder_operations import join, maybe_mkdir_p
@@ -19,7 +19,6 @@ class StemmedPlanner(ExperimentPlanner):
     }
     spacing_percentile_min = 25
     spacing_percentile_step = 5
-    UNet_min_batch_size = 2
     trainer_defaults = {
         "initial_lr": 3e-4,
         "weight_decay": 1e-3,
@@ -31,25 +30,25 @@ class StemmedPlanner(ExperimentPlanner):
 
     def __init__(
         self,
-        dataset_name_or_id: Union[str, int],
+        dataset_name_or_id: str | int,
         gpu_memory_target_in_gb: float = 8,
         preprocessor_name: str = "DefaultPreprocessor",
         plans_name: str = "StemmedPlans",
-        overwrite_target_spacing: Union[List[float], Tuple[float, ...]] = None,
+        overwrite_target_spacing: Sequence[float] | None = None,
         suppress_transpose: bool = False,
     ):
         super().__init__(
-            dataset_name_or_id,
-            gpu_memory_target_in_gb,
-            preprocessor_name,
-            plans_name,
-            overwrite_target_spacing,
-            suppress_transpose,
+            dataset_name_or_id=dataset_name_or_id,
+            gpu_memory_target_in_gb=gpu_memory_target_in_gb,
+            preprocessor_name=preprocessor_name,
+            plans_name=plans_name,
+            overwrite_target_spacing=overwrite_target_spacing,
+            suppress_transpose=suppress_transpose,
         )
 
     @staticmethod
     def _percentile_spacing(
-        spacing_percentiles: Dict[str, List[float]], percentile: int
+        spacing_percentiles: Mapping[str, Sequence[float]], percentile: int
     ) -> np.ndarray:
         key = str(int(percentile))
         if key not in spacing_percentiles:
@@ -62,11 +61,12 @@ class StemmedPlanner(ExperimentPlanner):
     @classmethod
     def determine_target_spacing_for_factor(
         cls,
-        spacing_percentiles: Dict[str, List[float]],
+        spacing_percentiles: Mapping[str, Sequence[float]],
         stem_factor: int,
-        percentile_min: int = None,
-        percentile_step: int = None,
+        percentile_min: int | None = None,
+        percentile_step: int | None = None,
     ) -> np.ndarray:
+        """Reduce anisotropic spacing without crossing the requested stem factor."""
         percentile_min = (
             cls.spacing_percentile_min if percentile_min is None else percentile_min
         )
@@ -81,8 +81,7 @@ class StemmedPlanner(ExperimentPlanner):
             if median_spacing[axis] / reference_spacing <= stem_factor:
                 continue
 
-            previous_spacing = median_spacing[axis]
-            selected_spacing = None
+            selected_spacing = median_spacing[axis]
             for percentile in range(
                 50 - percentile_step, percentile_min - 1, -percentile_step
             ):
@@ -90,15 +89,14 @@ class StemmedPlanner(ExperimentPlanner):
                     spacing_percentiles, percentile
                 )[axis]
                 if candidate_spacing / reference_spacing < stem_factor:
-                    selected_spacing = previous_spacing
                     break
-                previous_spacing = candidate_spacing
+                selected_spacing = candidate_spacing
+            else:
+                selected_spacing = cls._percentile_spacing(
+                    spacing_percentiles, percentile_min
+                )[axis]
 
-            target_spacing[axis] = (
-                cls._percentile_spacing(spacing_percentiles, percentile_min)[axis]
-                if selected_spacing is None
-                else selected_spacing
-            )
+            target_spacing[axis] = selected_spacing
 
         return target_spacing
 
@@ -131,57 +129,53 @@ class StemmedPlanner(ExperimentPlanner):
         median_shape: np.ndarray,
         stem_stride: np.ndarray,
         num_stages: int,
-    ) -> Tuple[List[int], List[int]]:
+    ) -> tuple[list[int], list[int]]:
         physical_extent = np.asarray(target_spacing, dtype=float) * np.asarray(
             median_shape, dtype=float
         )
         aspect_ratio = np.maximum(
             1, np.rint(physical_extent / np.min(physical_extent)).astype(int)
         )
-        post_stem_stride = np.asarray(
-            [2 ** (num_stages - 1)] * len(stem_stride), dtype=int
-        )
         patch_size_unit = (
-            np.asarray(stem_stride, dtype=int) * post_stem_stride * aspect_ratio
+            np.asarray(stem_stride, dtype=int) * 2 ** (num_stages - 1) * aspect_ratio
         ).astype(int)
-        return [int(i) for i in aspect_ratio], [int(i) for i in patch_size_unit]
+        return aspect_ratio.tolist(), patch_size_unit.tolist()
 
     @staticmethod
     def compute_patch_size_unit_mm(
-        patch_size_unit: List[int], target_spacing: np.ndarray
-    ) -> List[float]:
+        patch_size_unit: Sequence[int], target_spacing: np.ndarray
+    ) -> list[float]:
         patch_size_unit_mm = np.asarray(patch_size_unit, dtype=float) * np.asarray(
             target_spacing, dtype=float
         )
-        return [float(i) for i in patch_size_unit_mm]
+        return patch_size_unit_mm.tolist()
 
     @staticmethod
-    def compute_stem_kernel_size(stem_stride: List[int]) -> List[int]:
+    def compute_stem_kernel_size(stem_stride: Sequence[int]) -> list[int]:
         return [max(3, int(2 * i - 1)) for i in stem_stride]
 
     @staticmethod
     def _transpose(
-        spatial_values: Union[np.ndarray, List[int], List[float]],
-        transpose_forward: List[int],
+        spatial_values: np.ndarray | Sequence[int] | Sequence[float],
+        transpose_forward: Sequence[int],
     ) -> np.ndarray:
         return np.asarray(spatial_values)[transpose_forward]
+
+    def _median_spacing(self) -> np.ndarray:
+        return np.median(np.vstack(self.dataset_fingerprint["spacings"]), axis=0)
 
     def determine_transpose(self):
         if self.suppress_transpose:
             return [0, 1, 2], [0, 1, 2]
 
-        median_spacing = np.median(
-            np.vstack(self.dataset_fingerprint["spacings"]), axis=0
-        )
+        median_spacing = self._median_spacing()
         max_spacing_axis = int(np.argmax(median_spacing))
         remaining_axes = [i for i in range(3) if i != max_spacing_axis]
         transpose_forward = [max_spacing_axis] + remaining_axes
-        transpose_backward = [
-            int(np.argwhere(np.array(transpose_forward) == i)[0][0]) for i in range(3)
-        ]
+        transpose_backward = np.argsort(transpose_forward).tolist()
         return transpose_forward, transpose_backward
 
-    def _get_spacing_percentiles(self) -> Dict[str, List[float]]:
+    def _get_spacing_percentiles(self) -> Mapping[str, Sequence[float]]:
         if "spacing_percentiles" not in self.dataset_fingerprint:
             raise RuntimeError(
                 f"{self.__class__.__name__} requires spacing_percentiles in "
@@ -191,7 +185,7 @@ class StemmedPlanner(ExperimentPlanner):
         return self.dataset_fingerprint["spacing_percentiles"]
 
     def _get_median_shape_at_spacing(
-        self, target_spacing: np.ndarray, transpose_forward: List[int]
+        self, target_spacing: np.ndarray, transpose_forward: Sequence[int]
     ) -> np.ndarray:
         new_shapes = [
             compute_new_shape(shape, spacing, target_spacing)
@@ -205,8 +199,8 @@ class StemmedPlanner(ExperimentPlanner):
     @staticmethod
     def _stem_architecture(
         num_stages: int,
-        stem_stride: List[int],
-        stem_kernel_size: List[int],
+        stem_stride: list[int],
+        stem_kernel_size: list[int],
     ) -> dict:
         return {
             "arch_kwargs": {
@@ -241,13 +235,15 @@ class StemmedPlanner(ExperimentPlanner):
         }
 
     def _plan_for_preset(
-        self, configuration_name: str, transpose_forward: List[int]
+        self,
+        configuration_name: str,
+        transpose_forward: Sequence[int],
+        spacing_percentiles: Mapping[str, Sequence[float]],
+        median_spacing: np.ndarray,
     ) -> dict:
         preset = self.presets[configuration_name]
         stem_factor = preset["stem_factor"]
         num_stages = preset["num_stages"]
-        spacing_percentiles = self._get_spacing_percentiles()
-        median_spacing = self._percentile_spacing(spacing_percentiles, 50)
         target_spacing = (
             np.asarray(self.overwrite_target_spacing, dtype=float)
             if self.overwrite_target_spacing is not None
@@ -275,7 +271,7 @@ class StemmedPlanner(ExperimentPlanner):
         patch_size_unit_mm = self.compute_patch_size_unit_mm(
             patch_size_unit, target_spacing_transposed
         )
-        stem_stride_list = [int(i) for i in stem_stride_transposed]
+        stem_stride_list = stem_stride_transposed.tolist()
         stem_kernel_size = self.compute_stem_kernel_size(stem_stride_list)
 
         return {
@@ -291,7 +287,7 @@ class StemmedPlanner(ExperimentPlanner):
             "median_image_size_in_voxels": [
                 int(round(i)) for i in median_shape_transposed
             ],
-            "spacing": [float(i) for i in target_spacing_transposed],
+            "spacing": target_spacing_transposed.tolist(),
             "stem_factor": stem_factor,
             "batch_dice": True,
             "architecture": self._stem_architecture(
@@ -308,9 +304,7 @@ class StemmedPlanner(ExperimentPlanner):
         return {}
 
     def plan_experiment(self):
-        median_spacing = np.median(
-            np.vstack(self.dataset_fingerprint["spacings"]), axis=0
-        )
+        median_spacing = self._median_spacing()
         if len(median_spacing) != 3:
             raise RuntimeError(
                 f"{self.__class__.__name__} only generates 3D configurations."
@@ -318,9 +312,16 @@ class StemmedPlanner(ExperimentPlanner):
 
         transpose_forward, transpose_backward = self.determine_transpose()
         configurations = {"base": self._base_configuration()}
+        spacing_percentiles = self._get_spacing_percentiles()
+        preset_median_spacing = self._percentile_spacing(spacing_percentiles, 50)
         configurations.update(
             {
-                name: self._plan_for_preset(name, transpose_forward)
+                name: self._plan_for_preset(
+                    name,
+                    transpose_forward,
+                    spacing_percentiles,
+                    preset_median_spacing,
+                )
                 for name in self.presets
             }
         )
