@@ -751,9 +751,9 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "-p",
         "--plan",
-        default="MobileUNetPlanner",
+        default="MobileUNetPlans",
         help="Plans identifier under nnUNet_preprocessed/<dataset>, or a direct plans JSON path. "
-        "Default: MobileUNetPlanner",
+        "Default: MobileUNetPlans",
     )
     parser.add_argument("-c", "--configs", nargs="+", help="Configuration names.")
     parser.add_argument("-f", "--folds", nargs="+", type=int, help="Fold indices.")
@@ -785,7 +785,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         help="Number of GPUs assigned to each job. Default: 1.",
     )
     parser.add_argument(
-        "--disable-tta",
+        "--disable_tta",
         action="store_true",
         default=False,
         help="Disable test-time augmentation during post-training validation.",
