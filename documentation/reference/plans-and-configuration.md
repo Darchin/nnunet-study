@@ -35,7 +35,9 @@ It contains:
 
 ## Special configuration relationships
 
-- `inherits_from`: reuse another configuration and override selected fields
+- `inherits_from`: reuse one or more configurations and override selected fields. A string selects one parent. A list
+  composes fully resolved parents from left to right, so later parents override earlier parents and the child overrides
+  all of them.
 - `previous_stage`: previous stage of a cascade
 - `next_stage`: next stage of a cascade
 
@@ -64,6 +66,24 @@ You generally do not need to rerun preprocessing for training-only changes such 
   "batch_size": 40
 }
 ```
+
+### Compose an architecture configuration and a training recipe
+
+```json
+"mn-2x-t-recipe": {
+  "inherits_from": ["mn-2x", "mobile-training-recipe"],
+  "patch_size_multiplier": 6,
+  "architecture": {
+    "arch_kwargs": {
+      "channels": [16, 32, 64, 128, 256]
+    }
+  }
+}
+```
+
+Each parent is resolved before it is merged. This is ordered composition rather than an implicit inheritance order:
+parents later in the list take precedence over earlier parents, and fields in the child take precedence over every
+parent. Nested dictionaries follow the same configuration merge behavior as single-parent inheritance.
 
 ### Add a custom preprocessor
 

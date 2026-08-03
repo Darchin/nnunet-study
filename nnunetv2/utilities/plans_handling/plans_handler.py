@@ -283,24 +283,41 @@ class PlansManager(object):
         if configuration_name not in self.plans['configurations'].keys():
             raise ValueError(f'The configuration {configuration_name} does not exist in the plans I have. Valid '
                              f'configuration names are {list(self.plans["configurations"].keys())}.')
+        if visited is None:
+            visited = ()
+        if configuration_name in visited:
+            inheritance_path = (*visited, configuration_name)
+            raise RuntimeError(
+                f"Circular dependency detected while resolving configuration inheritance. "
+                f"Inheritance path: {inheritance_path}."
+            )
+
+        visited = (*visited, configuration_name)
         configuration = deepcopy(self.plans['configurations'][configuration_name])
         if 'inherits_from' in configuration:
-            parent_config_name = configuration['inherits_from']
-
-            if visited is None:
-                visited = (configuration_name,)
-            else:
-                if parent_config_name in visited:
-                    raise RuntimeError(f"Circular dependency detected. The following configurations were visited "
-                                       f"while solving inheritance (in that order!): {visited}. "
-                                       f"Current configuration: {configuration_name}. Its parent configuration "
-                                       f"is {parent_config_name}.")
-                visited = (*visited, configuration_name)
-
-            base_config = self._internal_resolve_configuration_inheritance(parent_config_name, visited)
+            parent_config_names = self._normalize_inherits_from(configuration_name, configuration['inherits_from'])
+            base_config = self._internal_resolve_configuration_inheritance(parent_config_names[0], visited)
+            for parent_config_name in parent_config_names[1:]:
+                parent_config = self._internal_resolve_configuration_inheritance(parent_config_name, visited)
+                base_config = self._merge_inherited_configuration(base_config, parent_config)
             configuration = self._merge_inherited_configuration(base_config, configuration)
         configuration = self._resolve_patch_size_from_multiplier(configuration_name, configuration)
         return configuration
+
+    @staticmethod
+    def _normalize_inherits_from(configuration_name: str,
+                                 inherits_from: Union[str, List[str]]) -> Tuple[str, ...]:
+        if isinstance(inherits_from, str):
+            if inherits_from:
+                return (inherits_from,)
+        elif isinstance(inherits_from, list):
+            if inherits_from and all(isinstance(parent, str) and parent for parent in inherits_from):
+                return tuple(inherits_from)
+
+        raise ValueError(
+            f"Configuration {configuration_name} has an invalid inherits_from value: {inherits_from!r}. "
+            f"Expected a non-empty configuration name or a non-empty list of configuration names."
+        )
 
     @staticmethod
     def _merge_inherited_configuration(base_config: dict, child_config: dict) -> dict:
