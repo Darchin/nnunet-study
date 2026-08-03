@@ -63,7 +63,7 @@ class MobileUNetPlanner(StemmedPlanner):
         num_stages = cls.presets[parent_name]["num_stages"]
         dim = 3
         return {
-            "inherits_from": ["mn", parent_name],
+            "inherits_from": [parent_name, "mn"],
             "architecture": {
                 "network_class_name": "nnunetv2.network_architecture.mobile_unet.MobileUNet",
                 "arch_kwargs": {
