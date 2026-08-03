@@ -7,6 +7,14 @@ from nnunetv2.experiment_planning.experiment_planners.stemmed_planner import (
 
 
 class MobileUNetPlanner(StemmedPlanner):
+    trainer_defaults = {
+        "initial_lr": 3e-4,
+        "weight_decay": 1e-3,
+        "num_epochs": 250,
+        "warmup_epochs": 5,
+        "min_lr": 1e-6,
+        "enable_deep_supervision": False,
+    }
     mobile_presets = {
         "mn-2x": {
             "inherits_from": "2x",
@@ -30,6 +38,7 @@ class MobileUNetPlanner(StemmedPlanner):
             "decoder_expansion_ratios": 1.0,
         },
     }
+
     def __init__(
         self,
         dataset_name_or_id: Union[str, int],
@@ -54,7 +63,7 @@ class MobileUNetPlanner(StemmedPlanner):
         num_stages = cls.presets[parent_name]["num_stages"]
         dim = 3
         return {
-            "inherits_from": parent_name,
+            "inherits_from": ["mn", parent_name],
             "architecture": {
                 "network_class_name": "nnunetv2.network_architecture.mobile_unet.MobileUNet",
                 "arch_kwargs": {
@@ -85,10 +94,14 @@ class MobileUNetPlanner(StemmedPlanner):
         }
 
     def _additional_configurations(self) -> dict:
-        return {
-            name: self._mobile_configuration(preset)
-            for name, preset in self.mobile_presets.items()
-        }
+        configurations = {"mn": {"trainer": dict(self.trainer_defaults)}}
+        configurations.update(
+            {
+                name: self._mobile_configuration(preset)
+                for name, preset in self.mobile_presets.items()
+            }
+        )
+        return configurations
 
 
 class BaselinePlanner(MobileUNetPlanner):

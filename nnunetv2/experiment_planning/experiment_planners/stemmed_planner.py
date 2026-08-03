@@ -19,14 +19,6 @@ class StemmedPlanner(ExperimentPlanner):
     }
     spacing_percentile_min = 25
     spacing_percentile_step = 5
-    trainer_defaults = {
-        "initial_lr": 3e-4,
-        "weight_decay": 1e-3,
-        "num_epochs": 250,
-        "warmup_epochs": 5,
-        "min_lr": 1e-6,
-        "enable_deep_supervision": False,
-    }
 
     def __init__(
         self,
@@ -293,7 +285,6 @@ class StemmedPlanner(ExperimentPlanner):
             "architecture": self._stem_architecture(
                 num_stages, stem_stride_list, stem_kernel_size
             ),
-            "trainer": dict(self.trainer_defaults),
             "required_for_training": [
                 "patch_size_multiplier",
                 "architecture.network_class_name",
