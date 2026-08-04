@@ -1211,7 +1211,10 @@ class nnUNetTrainer(object):
             self.initialize()
 
         if isinstance(filename_or_checkpoint, str):
-            checkpoint = torch.load(filename_or_checkpoint, map_location=self.device, weights_only=False)
+            # Loading directly onto CUDA also moves non-fused Adam/AdamW step counters there. PyTorch deliberately
+            # keeps those counters on CPU because reading CUDA counters during each optimizer step forces costly
+            # synchronizations. load_state_dict moves the remaining optimizer state to the parameter device.
+            checkpoint = torch.load(filename_or_checkpoint, map_location='cpu', weights_only=False)
         # if state dict comes from nn.DataParallel but we use non-parallel model here then the state dict keys do not
         # match. Use heuristic to make it match
         new_state_dict = {}
