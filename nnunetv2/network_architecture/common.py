@@ -1,10 +1,13 @@
-from typing import Optional
+from functools import partial
+from typing import Literal, Optional, Sequence
 
 import torch
 import torch.nn as nn
+
 from nnunetv2.network_architecture.nd import AdaptiveAvgPoolNd, ConvNd, ConvTransposeNd
 from nnunetv2.network_architecture.types import ModuleFactory, ShapeNd
 from nnunetv2.network_architecture.utils import ensure_ntuple
+from nnunetv2.network_architecture.init import identity_init
 
 
 class SqueezeAndExcitationBlock(nn.Module):
@@ -50,51 +53,69 @@ class ConvBlock(nn.Module):
         normalization: ModuleFactory = nn.Identity,
         activation: ModuleFactory = nn.Identity,
         se_reduction: Optional[float] = None,
+        layer_sequence: Sequence[Literal["conv", "norm", "act", "se"]] = [
+            "conv",
+            "norm",
+            "act",
+            "se",
+        ],
     ):
         super().__init__()
 
-        self.norm = normalization(ndim, out_channels)
-        self.act = activation()
+        assert len(layer_sequence) == 4
+        assert set(layer_sequence) == {"conv", "norm", "act", "se"}
 
-        _has_bias = bias or isinstance(self.norm, nn.Identity)
-
-        self.conv = ConvNd(
-            ndim,
-            in_channels,
-            out_channels,
-            kernel_size,
-            stride,
-            padding,
-            groups=groups,
-            bias=_has_bias,
+        _norm_is_identity = issubclass(
+            normalization.func if isinstance(normalization, partial) else normalization,
+            nn.Identity,
         )
 
-        self.se = (
-            SqueezeAndExcitationBlock(ndim, out_channels, se_reduction)
-            if se_reduction is not None
-            else nn.Identity()
-        )
+        _has_bias = bias or _norm_is_identity
+
+        channels = in_channels
+        self.layers = nn.ModuleDict()
+        for layer in layer_sequence:
+            match layer:
+                case "conv":
+                    self.layers["conv"] = ConvNd(
+                        ndim,
+                        in_channels,
+                        out_channels,
+                        kernel_size,
+                        stride,
+                        padding,
+                        groups=groups,
+                        bias=_has_bias,
+                    )
+                    channels = out_channels
+                case "norm":
+                    self.layers["norm"] = normalization(ndim, channels)
+                case "act":
+                    self.layers["act"] = activation()
+                case "se":
+                    self.layers["se"] = (
+                        SqueezeAndExcitationBlock(ndim, channels, se_reduction)
+                        if se_reduction is not None
+                        else nn.Identity()
+                    )
 
         self.reset_parameters()
 
     def reset_parameters(self):
         # initialize conv
-        nn.init.kaiming_uniform_(self.conv.weight, nonlinearity="relu")
-        if self.conv.bias is not None:
-            nn.init.zeros_(self.conv.bias)
+        conv = self.layers["conv"]
+        nn.init.kaiming_uniform_(conv.weight, nonlinearity="relu")
+        if self.layers["conv"].bias is not None:
+            nn.init.zeros_(conv.bias)
 
         # initialize norm
-        if not isinstance(self.norm, nn.Identity):
-            if hasattr(self.norm, "weight") and self.norm.weight is not None:
-                nn.init.ones_(self.norm.weight)
-            if hasattr(self.norm, "bias") and self.norm.bias is not None:
-                nn.init.zeros_(self.norm.bias)
+        norm = self.layers["norm"]
+        if not isinstance(norm, nn.Identity):
+            identity_init(norm)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        x = self.conv(x)
-        x = self.norm(x)
-        x = self.act(x)
-        x = self.se(x)
+        for layer in self.layers.values():
+            x = layer(x)
         return x
 
 

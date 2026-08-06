@@ -1,5 +1,5 @@
-from typing import Optional
-
+from typing import Literal, Optional, Sequence
+from functools import partial
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -11,6 +11,7 @@ from nnunetv2.network_architecture.common import (
     AdaptiveAvgPoolNd,
 )
 from nnunetv2.network_architecture.utils import compute_padding
+from nnunetv2.network_architecture.init import identity_init
 
 
 class Router(nn.Module):
@@ -111,40 +112,64 @@ class CondPWConvBlock(nn.Module):
         activation: ModuleFactory = nn.Identity,
         se_reduction: Optional[float] = None,
         cc_num_experts: Optional[int] = None,
+        layer_sequence: Sequence[Literal["conv", "norm", "act", "se"]] = [
+            "conv",
+            "norm",
+            "act",
+            "se",
+        ],
     ):
         super().__init__()
-        self.norm = normalization(ndim, out_channels)
-        self.act = activation()
 
-        _has_bias = bias or isinstance(self.norm, nn.Identity)
+        assert len(layer_sequence) == 4
+        assert set(layer_sequence) == {"conv", "norm", "act", "se"}
+
+        _norm_is_identity = issubclass(
+            normalization.func if isinstance(normalization, partial) else normalization,
+            nn.Identity,
+        )
+        _has_bias = bias or _norm_is_identity
         self._is_cc = cc_num_experts is not None
 
-        if not self._is_cc:
-            self.conv = ConvNd(ndim, in_channels, out_channels, 1, bias=_has_bias)
-        else:
-            self.conv = CondPWConv(in_channels, out_channels, _has_bias, cc_num_experts)
-
-        self.se = (
-            SqueezeAndExcitationBlock(ndim, out_channels, se_reduction)
-            if se_reduction is not None
-            else nn.Identity()
-        )
+        channels = in_channels
+        self.layers = nn.ModuleDict()
+        for layer in layer_sequence:
+            match layer:
+                case "conv":
+                    self.layers["conv"] = (
+                        ConvNd(ndim, in_channels, out_channels, 1, bias=_has_bias)
+                        if not self._is_cc
+                        else CondPWConv(
+                            in_channels, out_channels, _has_bias, cc_num_experts
+                        )
+                    )
+                    channels = out_channels
+                case "norm":
+                    self.layers["norm"] = normalization(ndim, channels)
+                case "act":
+                    self.layers["act"] = activation()
+                case "se":
+                    self.layers["se"] = (
+                        SqueezeAndExcitationBlock(ndim, channels, se_reduction)
+                        if se_reduction is not None
+                        else nn.Identity()
+                    )
 
         self.reset_parameters()
 
     def reset_parameters(self):
-        # initialize conv params if not using CC
+        # initialize conv params if not using CC,
+        # since if we are, they are auto initialized by the cc module
+        conv = self.layers["conv"]
         if not self._is_cc:
-            nn.init.kaiming_uniform_(self.conv.weight)
-            if self.conv.bias is not None:
-                nn.init.zeros_(self.conv.bias)
+            nn.init.kaiming_uniform_(conv.weight)
+            if conv.bias is not None:
+                nn.init.zeros_(conv.bias)
 
         # initialize norm
-        if not isinstance(self.norm, nn.Identity):
-            if hasattr(self.norm, "weight") and self.norm.weight is not None:
-                nn.init.ones_(self.norm.weight)
-            if hasattr(self.norm, "bias") and self.norm.bias is not None:
-                nn.init.zeros_(self.norm.bias)
+        norm = self.layers["norm"]
+        if not isinstance(norm, nn.Identity):
+            identity_init(norm)
 
     def forward(
         self, x: torch.Tensor, scores: Optional[torch.Tensor] = None
@@ -157,12 +182,13 @@ class CondPWConvBlock(nn.Module):
         scores : Optional Tensor of shape (batch_size, num_experts)
             Per-sample score map for the experts.
         """
-        if self._is_cc:
-            assert scores is not None
-            x = self.conv(x, scores)
-        else:
-            x = self.conv(x)
-        x = self.norm(x)
-        x = self.act(x)
-        x = self.se(x)
+        for name, layer in self.layers.items():
+            if name == "conv":
+                if self._is_cc:
+                    assert scores is not None
+                    x = layer(x, scores)
+                else:
+                    x = layer(x)
+            else:
+                x = layer(x)
         return x
