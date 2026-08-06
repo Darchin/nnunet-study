@@ -11,7 +11,7 @@ from nnunetv2.network_architecture.nd import (
     ConvTransposeNd,
     LinearUpsampleNd,
 )
-from nnunetv2.network_architecture.cond_conv import CondPWConvBlock, Router
+from nnunetv2.network_architecture.condconv import CondPWConvBlock, Router
 from nnunetv2.network_architecture.utils import (
     compute_padding,
     compute_output_padding,
