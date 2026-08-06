@@ -482,7 +482,7 @@ class MobileUNet(nn.Module):
         for stage in self.encoder.stages + self.decoder.stages:
             for block in stage.blocks:
                 if block._can_add_identity:
-                    residual_norm = block.pw_conv_out.layers["norm"]
+                    residual_norm = block.pw_conv_out.norm
                     if not isinstance(residual_norm, nn.Identity):
                         zero_init(residual_norm)
 
