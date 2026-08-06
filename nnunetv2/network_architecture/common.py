@@ -50,6 +50,7 @@ class ConvBlock(nn.Module):
         padding: int | ShapeNd = 0,
         groups: int = 1,
         bias: bool | None = None,
+        convolution: ModuleFactory = ConvNd,
         normalization: ModuleFactory = nn.Identity,
         activation: ModuleFactory = nn.Identity,
         se_reduction: Optional[float] = None,
@@ -77,13 +78,13 @@ class ConvBlock(nn.Module):
         for layer in layer_sequence:
             match layer:
                 case "conv":
-                    self.layers["conv"] = ConvNd(
-                        ndim,
-                        in_channels,
-                        out_channels,
-                        kernel_size,
-                        stride,
-                        padding,
+                    self.layers["conv"] = convolution(
+                        N=ndim,
+                        in_channels=in_channels,
+                        out_channels=out_channels,
+                        kernel_size=kernel_size,
+                        stride=stride,
+                        padding=padding,
                         groups=groups,
                         bias=_has_bias,
                     )
@@ -104,18 +105,22 @@ class ConvBlock(nn.Module):
     def reset_parameters(self):
         # initialize conv
         conv = self.layers["conv"]
-        nn.init.kaiming_uniform_(conv.weight, nonlinearity="relu")
-        if self.layers["conv"].bias is not None:
-            nn.init.zeros_(conv.bias)
+        if isinstance(conv, (nn.Conv1d, nn.Conv2d, nn.Conv3d)):
+            nn.init.kaiming_uniform_(conv.weight, nonlinearity="relu")
+            if conv.bias is not None:
+                nn.init.zeros_(conv.bias)
 
         # initialize norm
         norm = self.layers["norm"]
         if not isinstance(norm, nn.Identity):
             identity_init(norm)
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        for layer in self.layers.values():
-            x = layer(x)
+    def forward(self, x: torch.Tensor, *args, **kwargs) -> torch.Tensor:
+        for name, layer in self.layers.items():
+            if name == "conv":
+                x = layer(x, *args, **kwargs)
+            else:
+                x = layer(x)
         return x
 
 
