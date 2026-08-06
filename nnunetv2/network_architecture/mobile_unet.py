@@ -283,6 +283,7 @@ class DecoderStage(nn.Module):
         self.blocks.extend(
             [
                 InvertedBottleneckBlock(
+                    ndim,
                     out_channels,
                     out_channels,
                     expansion_ratio,
