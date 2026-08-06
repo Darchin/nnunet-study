@@ -17,7 +17,7 @@ from nnunetv2.network_architecture.utils import (
     compute_output_padding,
     ensure_ntuple,
 )
-
+from nnunetv2.network_architecture.init import zero_init
 
 class InvertedBottleneckBlock(nn.Module):
     def __init__(
@@ -481,18 +481,9 @@ class MobileUNet(nn.Module):
         for stage in self.encoder.stages + self.decoder.stages:
             for block in stage.blocks:
                 if block._can_add_identity:
-                    residual_norm = block.pw_conv_out.norm
+                    residual_norm = block.pw_conv_out.layers["norm"]
                     if not isinstance(residual_norm, nn.Identity):
-                        if (
-                            hasattr(residual_norm, "weight")
-                            and residual_norm.weight is not None
-                        ):
-                            nn.init.zeros_(residual_norm.weight)
-                        if (
-                            hasattr(residual_norm, "bias")
-                            and residual_norm.bias is not None
-                        ):
-                            nn.init.zeros_(residual_norm.bias)
+                        zero_init(residual_norm)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         x_enc: list[torch.Tensor] = self.encoder(x)
