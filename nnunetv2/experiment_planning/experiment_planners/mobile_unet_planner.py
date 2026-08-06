@@ -10,7 +10,7 @@ class MobileUNetPlanner(StemmedPlanner):
     trainer_defaults = {
         "initial_lr": 3e-4,
         "weight_decay": 1e-3,
-        "num_epochs": 250,
+        "num_epochs": 500,
         "warmup_epochs": 5,
         "min_lr": 1e-6,
         "enable_deep_supervision": False,
@@ -69,20 +69,15 @@ class MobileUNetPlanner(StemmedPlanner):
                 "arch_kwargs": {
                     "ndim": dim,
                     "kernel_sizes": [[3] * dim for _ in range(num_stages)],
-                    "strides": [[1] * dim]
-                    + [[2] * dim for _ in range(num_stages - 1)],
+                    "strides": [[1] * dim] + [[2] * dim for _ in range(num_stages - 1)],
                     "norm_layer": "nnunetv2.network_architecture.nd.InstanceNormNd",
                     "norm_kwargs": {},
                     "act_layer": "torch.nn.ReLU",
                     "act_kwargs": {"inplace": True},
                     "encoder_depths": preset["encoder_depths"],
                     "decoder_depths": preset["decoder_depths"],
-                    "encoder_expansion_ratios": preset[
-                        "encoder_expansion_ratios"
-                    ],
-                    "decoder_expansion_ratios": preset[
-                        "decoder_expansion_ratios"
-                    ],
+                    "encoder_expansion_ratios": preset["encoder_expansion_ratios"],
+                    "decoder_expansion_ratios": preset["decoder_expansion_ratios"],
                 },
                 "_kw_requires_import": ("norm_layer", "act_layer"),
             },
@@ -177,7 +172,11 @@ class BaselinePlanner(MobileUNetPlanner):
 
 
 class TemporaryPlanner(BaselinePlanner):
-    _temporary_configurations = {}
+    _temporary_configurations = {
+        "mn-4x-t_000": {
+            "inherits_from": "mn-4x-t",
+        }
+    }
 
     def _additional_configurations(self) -> dict:
         configurations = super()._additional_configurations()
