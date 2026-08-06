@@ -74,53 +74,53 @@ class ConvBlock(nn.Module):
         _has_bias = bias or _norm_is_identity
 
         channels = in_channels
-        self.layers = nn.ModuleDict()
         for layer in layer_sequence:
             match layer:
                 case "conv":
-                    self.layers["conv"] = convolution(
-                        N=ndim,
-                        in_channels=in_channels,
-                        out_channels=out_channels,
-                        kernel_size=kernel_size,
-                        stride=stride,
-                        padding=padding,
-                        groups=groups,
-                        bias=_has_bias,
+                    self.add_module(
+                        "conv",
+                        convolution(
+                            N=ndim,
+                            in_channels=in_channels,
+                            out_channels=out_channels,
+                            kernel_size=kernel_size,
+                            stride=stride,
+                            padding=padding,
+                            groups=groups,
+                            bias=_has_bias,
+                        ),
                     )
                     channels = out_channels
                 case "norm":
-                    self.layers["norm"] = normalization(ndim, channels)
+                    self.add_module("norm", normalization(ndim, channels))
                 case "act":
-                    self.layers["act"] = activation()
+                    self.add_module("act", activation())
                 case "se":
-                    self.layers["se"] = (
-                        SqueezeAndExcitationBlock(ndim, channels, se_reduction)
-                        if se_reduction is not None
-                        else nn.Identity()
+                    self.add_module(
+                        "se",
+                        (
+                            SqueezeAndExcitationBlock(ndim, channels, se_reduction)
+                            if se_reduction is not None
+                            else nn.Identity()
+                        ),
                     )
 
         self.reset_parameters()
 
     def reset_parameters(self):
         # initialize conv
-        conv = self.layers["conv"]
-        if isinstance(conv, (nn.Conv1d, nn.Conv2d, nn.Conv3d)):
-            nn.init.kaiming_uniform_(conv.weight, nonlinearity="relu")
-            if conv.bias is not None:
-                nn.init.zeros_(conv.bias)
+        if isinstance(self.conv, (nn.Conv1d, nn.Conv2d, nn.Conv3d)):
+            nn.init.kaiming_uniform_(self.conv.weight, nonlinearity="relu")
+            if self.conv.bias is not None:
+                nn.init.zeros_(self.conv.bias)
 
         # initialize norm
-        norm = self.layers["norm"]
-        if not isinstance(norm, nn.Identity):
-            identity_init(norm)
+        if not isinstance(self.norm, nn.Identity):
+            identity_init(self.norm)
 
-    def forward(self, x: torch.Tensor, *args, **kwargs) -> torch.Tensor:
-        for name, layer in self.layers.items():
-            if name == "conv":
-                x = layer(x, *args, **kwargs)
-            else:
-                x = layer(x)
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        for module in self.children():
+            x = module(x)
         return x
 
 

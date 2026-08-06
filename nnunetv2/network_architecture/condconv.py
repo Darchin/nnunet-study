@@ -156,7 +156,13 @@ class CondPWConvBlock(ConvBlock):
         scores : Optional Tensor of shape (batch_size, num_experts)
             Per-sample score map for the experts.
         """
-        if self._is_cc:
-            assert scores is not None
-            return super().forward(x, scores)
-        return super().forward(x)
+        for name, layer in self.named_children():
+            if name == "conv":
+                if self._is_cc:
+                    assert scores is not None
+                    x = layer(x, scores)
+                else:
+                    x = layer(x)
+            else:
+                x = layer(x)
+        return x
