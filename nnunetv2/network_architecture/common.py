@@ -1,10 +1,9 @@
-from typing import Callable, Optional
+from typing import Optional
 
 import torch
 import torch.nn as nn
-from torch.nn.common_types import _size_any_t
 from nnunetv2.network_architecture.nd import AdaptiveAvgPoolNd, ConvNd
-from nnunetv2.network_architecture.types import ModuleFactory
+from nnunetv2.network_architecture.types import ModuleFactory, ShapeNd
 
 
 class SqueezeAndExcitationBlock(nn.Module):
@@ -42,9 +41,9 @@ class ConvBlock(nn.Module):
         ndim: int,
         in_channels: int,
         out_channels: int,
-        kernel_size: _size_any_t = 1,
-        stride: _size_any_t = 1,
-        padding: _size_any_t = 0,
+        kernel_size: int | ShapeNd = 1,
+        stride: int | ShapeNd = 1,
+        padding: int | ShapeNd = 0,
         groups: int = 1,
         bias: bool | None = None,
         normalization: ModuleFactory = nn.Identity,
