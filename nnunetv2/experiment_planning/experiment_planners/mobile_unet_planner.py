@@ -68,6 +68,7 @@ class MobileUNetPlanner(StemmedPlanner):
                 "network_class_name": "nnunetv2.network_architecture.mobile_unet.MobileUNet",
                 "arch_kwargs": {
                     "ndim": dim,
+                    "block_factory": "nnunetv2.network_architecture.uib.InvertedBottleneckBlock",
                     "kernel_sizes": [[3] * dim for _ in range(num_stages)],
                     "strides": [[1] * dim] + [[2] * dim for _ in range(num_stages - 1)],
                     "norm_layer": "nnunetv2.network_architecture.nd.InstanceNormNd",
@@ -79,7 +80,7 @@ class MobileUNetPlanner(StemmedPlanner):
                     "encoder_expansion_ratios": preset["encoder_expansion_ratios"],
                     "decoder_expansion_ratios": preset["decoder_expansion_ratios"],
                 },
-                "_kw_requires_import": ("norm_layer", "act_layer"),
+                "_kw_requires_import": ("block_factory", "norm_layer", "act_layer"),
             },
             "required_for_training": [
                 "patch_size_multiplier",
