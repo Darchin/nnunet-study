@@ -11,7 +11,7 @@ from nnunetv2.network_architecture.nd import (
     ConvTransposeNd,
     LinearUpsampleNd,
 )
-from nnunetv2.network_architecture.uib import InvertedBottleneckBlock
+from nnunetv2.network_architecture.uib import UniversalInvertedBottleneckBlock
 from nnunetv2.network_architecture.utils import (
     compute_padding,
     compute_output_padding,
@@ -24,6 +24,7 @@ class EncoderStage(nn.Module):
     def __init__(
         self,
         ndim: int,
+        block_factory: type[UniversalInvertedBottleneckBlock],
         in_channels: int,
         out_channels: int,
         expansion_ratio: float,
@@ -44,7 +45,7 @@ class EncoderStage(nn.Module):
 
         # first block handles spatial downsampling and channel expansion
         self.blocks.append(
-            InvertedBottleneckBlock(
+            block_factory(
                 ndim,
                 in_channels,
                 out_channels,
@@ -63,7 +64,7 @@ class EncoderStage(nn.Module):
 
         self.blocks.extend(
             [
-                InvertedBottleneckBlock(
+                block_factory(
                     ndim,
                     out_channels,
                     out_channels,
@@ -92,6 +93,7 @@ class Encoder(nn.Module):
     def __init__(
         self,
         ndim: int,
+        block_factory: type[UniversalInvertedBottleneckBlock],
         num_features: int,
         stem_kernel_size: ShapeNd,
         stem_stride: ShapeNd,
@@ -129,6 +131,7 @@ class Encoder(nn.Module):
             self.stages.append(
                 EncoderStage(
                     ndim,
+                    block_factory,
                     channels[i],
                     channels[i + 1],
                     expansion_ratios[i],
@@ -161,6 +164,7 @@ class DecoderStage(nn.Module):
     def __init__(
         self,
         ndim: int,
+        block_factory: type[UniversalInvertedBottleneckBlock],
         in_channels: int,  # = decoder channels
         out_channels: int,  # = encoder channels
         expansion_ratio: float,
@@ -183,7 +187,7 @@ class DecoderStage(nn.Module):
 
         # first upsample block handles encoder/decoder feature map fusion
         self.blocks.append(
-            InvertedBottleneckBlock(
+            block_factory(
                 ndim,
                 in_channels + out_channels,
                 out_channels,
@@ -197,7 +201,7 @@ class DecoderStage(nn.Module):
 
         self.blocks.extend(
             [
-                InvertedBottleneckBlock(
+                block_factory(
                     ndim,
                     out_channels,
                     out_channels,
@@ -223,6 +227,7 @@ class Decoder(nn.Module):
     def __init__(
         self,
         ndim: int,
+        block_factory: type[UniversalInvertedBottleneckBlock],
         num_classes: int,
         stem_kernel_size: ShapeNd,
         stem_stride: ShapeNd,
@@ -243,6 +248,7 @@ class Decoder(nn.Module):
             self.stages.append(
                 DecoderStage(
                     ndim,
+                    block_factory,
                     channels[i + 1],
                     channels[i],
                     expansion_ratios[i],
@@ -275,8 +281,10 @@ class Decoder(nn.Module):
 @dataclass
 class MobileUNetConfig:
     ndim: int
+    block_factory: type[UniversalInvertedBottleneckBlock]
 
-    # these two must match the nnU-Net hard-coded values for the architecture builder
+    # names of these two variables must match
+    # the nnU-Net hard-coded values for the architecture builder
     input_channels: int
     num_classes: int
 
@@ -303,7 +311,7 @@ class MobileUNetConfig:
     decoder_depths: Sequence[int]
 
     se_reduction: Optional[float] = None
-    se_placement: Optional[Literal["in", "mid", "out"]] = None
+    se_placement: Optional[Literal["mid", "out"]] = None
 
     cc_num_experts: Sequence[Optional[int]] = None
     cc_router_kernel_size: Optional[ShapeNd] = None
@@ -357,6 +365,7 @@ class MobileUNet(nn.Module):
 
         self.encoder = Encoder(
             config.ndim,
+            config.block_factory,
             config.input_channels,
             config.stem_kernel_size,
             config.stem_stride,
@@ -377,6 +386,7 @@ class MobileUNet(nn.Module):
 
         self.decoder = Decoder(
             config.ndim,
+            config.block_factory,
             config.num_classes,
             config.stem_kernel_size,
             config.stem_stride,
