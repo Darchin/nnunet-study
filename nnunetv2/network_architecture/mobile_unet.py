@@ -11,98 +11,13 @@ from nnunetv2.network_architecture.nd import (
     ConvTransposeNd,
     LinearUpsampleNd,
 )
-from nnunetv2.network_architecture.condconv import CondPWConvBlock, Router
+from nnunetv2.network_architecture.uib import InvertedBottleneckBlock
 from nnunetv2.network_architecture.utils import (
     compute_padding,
     compute_output_padding,
     ensure_ntuple,
 )
 from nnunetv2.network_architecture.init import zero_init
-
-class InvertedBottleneckBlock(nn.Module):
-    def __init__(
-        self,
-        ndim: int,
-        in_channels: int,
-        out_channels: int,
-        expansion_ratio: float,
-        kernel_size: ShapeNd = 1,
-        stride: ShapeNd = 1,
-        normalization: ModuleFactory = nn.Identity,
-        activation: ModuleFactory = nn.Identity,
-        se_reduction: Optional[float] = None,
-        se_placement: Optional[Literal["in", "mid", "out"]] = None,
-        cc_num_experts: Optional[int] = None,
-        cc_router_kernel_size: Optional[ShapeNd] = None,
-        cc_router_stride: Optional[ShapeNd] = None,
-    ):
-        super().__init__()
-
-        hidden_channels = round(expansion_ratio * in_channels)
-        padding = compute_padding(ndim, kernel_size)
-
-        if cc_num_experts is not None:
-            self.router = Router(
-                ndim,
-                in_channels,
-                cc_router_kernel_size,
-                cc_router_stride,
-                cc_num_experts,
-            )
-        else:
-            self.router = None
-
-        self.pw_conv_in = CondPWConvBlock(
-            ndim,
-            in_channels=in_channels,
-            out_channels=hidden_channels,
-            normalization=normalization,
-            activation=activation,
-            se_reduction=se_reduction if se_placement == "in" else None,
-            cc_num_experts=cc_num_experts,
-        )
-
-        self.dw_conv = ConvBlock(
-            ndim,
-            in_channels=hidden_channels,
-            out_channels=hidden_channels,
-            kernel_size=kernel_size,
-            stride=stride,
-            padding=padding,
-            groups=hidden_channels,
-            normalization=normalization,
-            activation=activation,
-            se_reduction=se_reduction if se_placement == "mid" else None,
-        )
-
-        self.pw_conv_out = CondPWConvBlock(
-            ndim,
-            in_channels=hidden_channels,
-            out_channels=out_channels,
-            normalization=normalization,
-            se_reduction=se_reduction if se_placement == "out" else None,
-            cc_num_experts=cc_num_experts,
-        )
-
-        self._can_add_identity = all(s == 1 for s in ensure_ntuple(stride, ndim)) and (
-            in_channels == out_channels
-        )
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        identity = x
-
-        if self.router is not None:
-            scores = self.router(x)
-        else:
-            scores = None
-
-        x = self.pw_conv_in(x, scores)
-        x = self.dw_conv(x)
-        x = self.pw_conv_out(x, scores)
-
-        if self._can_add_identity:
-            x = x + identity
-        return x
 
 
 class EncoderStage(nn.Module):
@@ -482,9 +397,10 @@ class MobileUNet(nn.Module):
         for stage in self.encoder.stages + self.decoder.stages:
             for block in stage.blocks:
                 if block._can_add_identity:
-                    residual_norm = block.pw_conv_out.norm
-                    if not isinstance(residual_norm, nn.Identity):
-                        zero_init(residual_norm)
+                    if hasattr(block.pw_out, "norm"):
+                        residual_norm = block.pw_out.norm
+                        if not isinstance(residual_norm, nn.Identity):
+                            zero_init(residual_norm)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         x_enc: list[torch.Tensor] = self.encoder(x)
