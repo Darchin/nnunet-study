@@ -114,13 +114,11 @@ class CondPWConvBlock(ConvBlock):
         bias: bool | None = None,
         normalization: ModuleFactory = nn.Identity,
         activation: ModuleFactory = nn.Identity,
-        se_reduction: Optional[float] = None,
         cc_num_experts: Optional[int] = None,
-        layer_sequence: Sequence[Literal["conv", "norm", "act", "se"]] = [
+        layers: Sequence[Literal["conv", "norm", "act"]] = [
             "conv",
             "norm",
             "act",
-            "se",
         ],
     ):
         self._is_cc = cc_num_experts is not None
@@ -141,8 +139,7 @@ class CondPWConvBlock(ConvBlock):
             ),
             normalization=normalization,
             activation=activation,
-            se_reduction=se_reduction,
-            layer_sequence=layer_sequence,
+            layers=layers,
         )
 
     def forward(

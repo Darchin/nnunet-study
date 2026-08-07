@@ -53,28 +53,26 @@ class ConvBlock(nn.Module):
         convolution: ModuleFactory = ConvNd,
         normalization: ModuleFactory = nn.Identity,
         activation: ModuleFactory = nn.Identity,
-        se_reduction: Optional[float] = None,
-        layer_sequence: Sequence[Literal["conv", "norm", "act", "se"]] = [
+        layers: Sequence[Literal["conv", "norm", "act"]] = [
             "conv",
             "norm",
             "act",
-            "se",
         ],
     ):
         super().__init__()
 
-        assert len(layer_sequence) == 4
-        assert set(layer_sequence) == {"conv", "norm", "act", "se"}
+        assert "conv" in set(layers)
+        assert set(layers).issubset({"conv", "norm", "act"})
 
-        _norm_is_identity = issubclass(
+        self._norm_is_identity = issubclass(
             normalization.func if isinstance(normalization, partial) else normalization,
             nn.Identity,
         )
 
-        _has_bias = bias or _norm_is_identity
+        _has_bias = bias or self._norm_is_identity
 
         channels = in_channels
-        for layer in layer_sequence:
+        for layer in layers:
             match layer:
                 case "conv":
                     self.add_module(
@@ -95,15 +93,6 @@ class ConvBlock(nn.Module):
                     self.add_module("norm", normalization(ndim, channels))
                 case "act":
                     self.add_module("act", activation())
-                case "se":
-                    self.add_module(
-                        "se",
-                        (
-                            SqueezeAndExcitationBlock(ndim, channels, se_reduction)
-                            if se_reduction is not None
-                            else nn.Identity()
-                        ),
-                    )
 
         self.reset_parameters()
 
@@ -115,7 +104,7 @@ class ConvBlock(nn.Module):
                 nn.init.zeros_(self.conv.bias)
 
         # initialize norm
-        if not isinstance(self.norm, nn.Identity):
+        if hasattr(self, "norm") and not self._norm_is_identity:
             identity_init(self.norm)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
