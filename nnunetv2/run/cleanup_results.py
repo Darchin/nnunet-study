@@ -46,6 +46,13 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         default=None,
         help="Copy cleaned results to this directory. Without it, clean nnUNet_results in place.",
     )
+    parser.add_argument(
+        "-a",
+        "--all",
+        action="store_true",
+        default=False,
+        help="Collect all runs, including unfinished ones without validation/summary.json.",
+    )
     return parser.parse_args(argv)
 
 
@@ -68,7 +75,9 @@ def _configuration_name(name: str) -> str | None:
     return parts[2]
 
 
-def _discover_results(root: Path) -> tuple[tuple[Dataset, ...], list[str]]:
+def _discover_results(
+    root: Path, all_runs: bool = False
+) -> tuple[tuple[Dataset, ...], list[str]]:
     datasets: list[Dataset] = []
     warnings: list[str] = []
 
@@ -102,7 +111,12 @@ def _discover_results(root: Path) -> tuple[tuple[Dataset, ...], list[str]]:
             folds: list[str] = []
             for path in sorted(experiment_path.iterdir(), key=lambda path: path.name):
                 if path.is_dir() and path.name.startswith("fold_"):
-                    folds.append(path.name)
+                    if (
+                        all_runs
+                        or (path / "validation" / "summary.json").is_file()
+                        or (path / "summary.json").is_file()
+                    ):
+                        folds.append(path.name)
                 elif path.name not in METADATA_FILENAMES:
                     warnings.append(f"Skipping unrecognized experiment entry: {path}")
             if not folds:
@@ -147,10 +161,6 @@ def _validate_destinations(datasets: Sequence[Dataset], output_root: Path) -> No
             raise FileExistsError(
                 f"Multiple source datasets would produce {dataset_destination}."
             )
-        if dataset_destination.exists():
-            raise FileExistsError(
-                f"Destination dataset directory already exists: {dataset_destination}"
-            )
         claimed_datasets.add(dataset_destination)
 
         for experiment in dataset.experiments:
@@ -168,6 +178,10 @@ def _validate_destinations(datasets: Sequence[Dataset], output_root: Path) -> No
                 if fold_destination in claimed_folds:
                     raise FileExistsError(
                         f"Multiple source folds would produce {fold_destination}."
+                    )
+                if fold_destination.exists():
+                    raise FileExistsError(
+                        f"Destination fold directory already exists: {fold_destination}"
                     )
                 claimed_folds.add(fold_destination)
 
@@ -213,6 +227,17 @@ def _remove_path(path: Path) -> int:
     return 1
 
 
+def _find_plans_file(source_experiment: Path, folds: Sequence[str]) -> Path | None:
+    experiment_plans = source_experiment / "plans.json"
+    if experiment_plans.is_file():
+        return experiment_plans
+    for fold_name in folds:
+        fold_plans = source_experiment / fold_name / "plans.json"
+        if fold_plans.is_file():
+            return fold_plans
+    return None
+
+
 def _copy_results(
     datasets: Sequence[Dataset],
     source_root: Path,
@@ -221,19 +246,24 @@ def _copy_results(
 ) -> None:
     for dataset in datasets:
         for experiment in dataset.experiments:
+            source_experiment = (
+                source_root / dataset.source_name / experiment.source_name
+            )
+            destination_config = (
+                output_root / dataset.output_name / experiment.configuration_name
+            )
+            destination_config.mkdir(parents=True, exist_ok=True)
+
+            destination_plans = destination_config / "plans.json"
+            if not destination_plans.exists():
+                plans_source = _find_plans_file(source_experiment, experiment.folds)
+                if plans_source is not None:
+                    shutil.copy2(plans_source, destination_plans)
+                    summary.retained_files += 1
+
             for fold_name in experiment.folds:
-                source_fold = (
-                    source_root
-                    / dataset.source_name
-                    / experiment.source_name
-                    / fold_name
-                )
-                destination_fold = (
-                    output_root
-                    / dataset.output_name
-                    / experiment.configuration_name
-                    / fold_name
-                )
+                source_fold = source_experiment / fold_name
+                destination_fold = destination_config / fold_name
                 destination_fold.mkdir(parents=True, exist_ok=False)
                 for source_file in _retained_files(source_fold):
                     destination_name = (
@@ -284,7 +314,16 @@ def _clean_results_in_place(
                 _clean_fold_in_place(destination_experiment / fold_name, summary)
                 summary.folds += 1
 
-            for metadata_filename in METADATA_FILENAMES:
+            destination_plans = destination_experiment / "plans.json"
+            if not destination_plans.exists():
+                plans_source = _find_plans_file(destination_experiment, experiment.folds)
+                if plans_source is not None and plans_source != destination_plans:
+                    shutil.move(str(plans_source), str(destination_plans))
+
+            if destination_plans.is_file():
+                summary.retained_files += 1
+
+            for metadata_filename in ("dataset_fingerprint.json", "dataset.json"):
                 summary.removed_paths += _remove_path(
                     destination_experiment / metadata_filename
                 )
@@ -294,7 +333,7 @@ def _clean_results_in_place(
 
 
 def cleanup_results(
-    source_root: Path, output_root: Path | None = None
+    source_root: Path, output_root: Path | None = None, all_runs: bool = False
 ) -> CleanupSummary:
     """Clean recognized results under *source_root*, optionally copying them to *output_root*."""
     source_root = Path(source_root)
@@ -307,7 +346,7 @@ def cleanup_results(
         output_root = Path(output_root)
     _validate_output_location(source_root, output_root)
 
-    datasets, warnings = _discover_results(source_root)
+    datasets, warnings = _discover_results(source_root, all_runs=all_runs)
     destination_root = output_root if output_root is not None else source_root
     _validate_destinations(datasets, destination_root)
     if output_root is None:
@@ -339,7 +378,7 @@ def cleanup_results(
 
 def cleanup_results_entry(argv: Sequence[str] | None = None) -> int:
     args = parse_args(argv)
-    cleanup_results(Path(nnUNet_results), args.output_dir)
+    cleanup_results(Path(nnUNet_results), args.output_dir, all_runs=args.all)
     return 0
 
 
