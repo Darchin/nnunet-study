@@ -22,9 +22,9 @@ class MobileUNetPlanner(StemmedPlanner):
                 "_kw_requires_import": ("block_factory", "norm_layer", "act_layer"),
             },
             "required_for_training": [
-                "ndim",
-                "kernel_sizes",
-                "strides",
+                "architecture.arch_kwargs.ndim",
+                "architecture.arch_kwargs.kernel_sizes",
+                "architecture.arch_kwargs.strides",
                 "patch_size_multiplier",
                 "architecture.network_class_name",
                 "architecture.arch_kwargs.channels",
@@ -44,14 +44,16 @@ class MobileUNetPlanner(StemmedPlanner):
         },
         "mn-2x": {
             "inherits_from": ["2x", "mn"],
-            "arch_kwargs": {
-                "ndim": 3,
-                "kernel_sizes": [[3] * 3 for _ in range(5)],
-                "strides": [[1] * 3] + [[2] * 3 for _ in range(5 - 1)],
-                "encoder_depths": [2, 3, 3, 9, 3],
-                "decoder_depths": [1, 1, 1, 1],
-                "encoder_expansion_ratios": [2.0, 2.0, 4.0, 4.0, 4.0],
-                "decoder_expansion_ratios": 1.0,
+            "architecture": {
+                "arch_kwargs": {
+                    "ndim": 3,
+                    "kernel_sizes": [[3] * 3 for _ in range(5)],
+                    "strides": [[1] * 3] + [[2] * 3 for _ in range(5 - 1)],
+                    "encoder_depths": [2, 3, 3, 9, 3],
+                    "decoder_depths": [1, 1, 1, 1],
+                    "encoder_expansion_ratios": [2.0, 2.0, 4.0, 4.0, 4.0],
+                    "decoder_expansion_ratios": 1.0,
+                }
             },
         },
         "mn-3x": {
@@ -169,9 +171,9 @@ class MobileUNetPlanner(StemmedPlanner):
                 "_kw_requires_import": ("block_factory", "norm_layer", "act_layer"),
             },
             "required_for_training": [
-                "ndim",
-                "kernel_sizes",
-                "strides",
+                "architecture.arch_kwargs.ndim",
+                "architecture.arch_kwargs.kernel_sizes",
+                "architecture.arch_kwargs.strides",
                 "patch_size_multiplier",
                 "architecture.network_class_name",
                 "architecture.arch_kwargs.channels",
@@ -191,14 +193,16 @@ class MobileUNetPlanner(StemmedPlanner):
         },
         "cn-2x": {
             "inherits_from": ["2x", "cn"],
-            "arch_kwargs": {
-                "ndim": 3,
-                "kernel_sizes": [[3] * 3 for _ in range(5)],
-                "strides": [[1] * 3] + [[2] * 3 for _ in range(5 - 1)],
-                "encoder_depths": [2, 3, 3, 9, 3],
-                "decoder_depths": [1, 1, 1, 1],
-                "encoder_expansion_ratios": [2.0, 2.0, 4.0, 4.0, 4.0],
-                "decoder_expansion_ratios": 1.0,
+            "architecture": {
+                "arch_kwargs": {
+                    "ndim": 3,
+                    "kernel_sizes": [[3] * 3 for _ in range(5)],
+                    "strides": [[1] * 3] + [[2] * 3 for _ in range(5 - 1)],
+                    "encoder_depths": [2, 3, 3, 9, 3],
+                    "decoder_depths": [1, 1, 1, 1],
+                    "encoder_expansion_ratios": [2.0, 2.0, 4.0, 4.0, 4.0],
+                    "decoder_expansion_ratios": 1.0,
+                }
             },
         },
         "cn-3x": {
