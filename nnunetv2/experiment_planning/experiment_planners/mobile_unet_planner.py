@@ -7,35 +7,79 @@ from nnunetv2.experiment_planning.experiment_planners.stemmed_planner import (
 
 
 class MobileUNetPlanner(StemmedPlanner):
-    trainer_defaults = {
-        "initial_lr": 3e-4,
-        "weight_decay": 1e-3,
-        "num_epochs": 500,
-        "warmup_epochs": 5,
-        "min_lr": 1e-6,
-        "enable_deep_supervision": False,
-    }
-    mobile_presets = {
+    _presets = {
+        "mn": {
+            "architecture": {
+                "network_class_name": "nnunetv2.network_architecture.mobile_unet.MobileUNet",
+                "arch_kwargs": {
+                    "block_factory": "nnunetv2.network_architecture.uib.InvertedBottleneckBlock",
+                    "norm_layer": "nnunetv2.network_architecture.nd.InstanceNormNd",
+                    "norm_kwargs": {},
+                    "act_layer": "torch.nn.ReLU",
+                    "act_kwargs": {"inplace": True},
+                },
+                "_kw_requires_import": ("block_factory", "norm_layer", "act_layer"),
+            },
+            "required_for_training": [
+                "ndim",
+                "kernel_sizes",
+                "strides",
+                "patch_size_multiplier",
+                "architecture.network_class_name",
+                "architecture.arch_kwargs.channels",
+                "architecture.arch_kwargs.encoder_depths",
+                "architecture.arch_kwargs.decoder_depths",
+                "architecture.arch_kwargs.encoder_expansion_ratios",
+                "architecture.arch_kwargs.decoder_expansion_ratios",
+            ],
+            "trainer": {
+                "initial_lr": 3e-4,
+                "weight_decay": 1e-3,
+                "num_epochs": 500,
+                "warmup_epochs": 5,
+                "min_lr": 1e-6,
+                "enable_deep_supervision": False,
+            },
+        },
         "mn-2x": {
-            "inherits_from": "2x",
-            "encoder_depths": [2, 3, 3, 9, 3],
-            "decoder_depths": [1, 1, 1, 1],
-            "encoder_expansion_ratios": [2.0, 2.0, 4.0, 4.0, 4.0],
-            "decoder_expansion_ratios": 1.0,
+            "inherits_from": ["2x", "mn"],
+            "arch_kwargs": {
+                "ndim": 3,
+                "kernel_sizes": [[3] * 3 for _ in range(5)],
+                "strides": [[1] * 3] + [[2] * 3 for _ in range(5 - 1)],
+                "encoder_depths": [2, 3, 3, 9, 3],
+                "decoder_depths": [1, 1, 1, 1],
+                "encoder_expansion_ratios": [2.0, 2.0, 4.0, 4.0, 4.0],
+                "decoder_expansion_ratios": 1.0,
+            },
         },
         "mn-3x": {
-            "inherits_from": "3x",
-            "encoder_depths": [3, 3, 9, 3],
-            "decoder_depths": [1, 1, 1],
-            "encoder_expansion_ratios": [2.0, 4.0, 4.0, 4.0],
-            "decoder_expansion_ratios": 1.0,
+            "inherits_from": ["3x", "mn"],
+            "architecture": {
+                "arch_kwargs": {
+                    "ndim": 3,
+                    "kernel_sizes": [[3] * 3 for _ in range(4)],
+                    "strides": [[1] * 3] + [[2] * 3 for _ in range(4 - 1)],
+                    "encoder_depths": [3, 3, 9, 3],
+                    "decoder_depths": [1, 1, 1],
+                    "encoder_expansion_ratios": [2.0, 4.0, 4.0, 4.0],
+                    "decoder_expansion_ratios": 1.0,
+                }
+            },
         },
         "mn-4x": {
-            "inherits_from": "4x",
-            "encoder_depths": [3, 3, 9, 3],
-            "decoder_depths": [1, 1, 1],
-            "encoder_expansion_ratios": [2.0, 4.0, 4.0, 4.0],
-            "decoder_expansion_ratios": 1.0,
+            "inherits_from": ["4x", "mn"],
+            "architecture": {
+                "arch_kwargs": {
+                    "ndim": 3,
+                    "kernel_sizes": [[3] * 3 for _ in range(4)],
+                    "strides": [[1] * 3] + [[2] * 3 for _ in range(4 - 1)],
+                    "encoder_depths": [3, 3, 9, 3],
+                    "decoder_depths": [1, 1, 1],
+                    "encoder_expansion_ratios": [2.0, 4.0, 4.0, 4.0],
+                    "decoder_expansion_ratios": 1.0,
+                }
+            },
         },
     }
 
@@ -57,47 +101,17 @@ class MobileUNetPlanner(StemmedPlanner):
             suppress_transpose,
         )
 
-    @classmethod
-    def _mobile_configuration(cls, preset: dict) -> dict:
-        parent_name = preset["inherits_from"]
-        num_stages = cls.presets[parent_name]["num_stages"]
-        dim = 3
-        return {
-            "inherits_from": [parent_name, "mn"],
-            "architecture": {
-                "network_class_name": "nnunetv2.network_architecture.mobile_unet.MobileUNet",
-                "arch_kwargs": {
-                    "ndim": dim,
-                    "block_factory": "nnunetv2.network_architecture.uib.InvertedBottleneckBlock",
-                    "kernel_sizes": [[3] * dim for _ in range(num_stages)],
-                    "strides": [[1] * dim] + [[2] * dim for _ in range(num_stages - 1)],
-                    "norm_layer": "nnunetv2.network_architecture.nd.InstanceNormNd",
-                    "norm_kwargs": {},
-                    "act_layer": "torch.nn.ReLU",
-                    "act_kwargs": {"inplace": True},
-                    "encoder_depths": preset["encoder_depths"],
-                    "decoder_depths": preset["decoder_depths"],
-                    "encoder_expansion_ratios": preset["encoder_expansion_ratios"],
-                    "decoder_expansion_ratios": preset["decoder_expansion_ratios"],
-                },
-                "_kw_requires_import": ("block_factory", "norm_layer", "act_layer"),
-            },
-            "required_for_training": [
-                "patch_size_multiplier",
-                "architecture.network_class_name",
-                "architecture.arch_kwargs.channels",
-            ],
-        }
+    def __init_subclass__(cls, **kwargs):
+        super().__init_subclass__(**kwargs)
+        if "_presets" in cls.__dict__:
+            merged = {}
+            for base in reversed(cls.__mro__):
+                if "_presets" in base.__dict__:
+                    merged.update(deepcopy(base.__dict__["_presets"]))
+            cls._presets = merged
 
     def _additional_configurations(self) -> dict:
-        configurations = {"mn": {"trainer": dict(self.trainer_defaults)}}
-        configurations.update(
-            {
-                name: self._mobile_configuration(preset)
-                for name, preset in self.mobile_presets.items()
-            }
-        )
-        return configurations
+        return deepcopy(self._presets)
 
 
 class BaselinePlanner(MobileUNetPlanner):
@@ -105,81 +119,82 @@ class BaselinePlanner(MobileUNetPlanner):
         "mn-2x-t": {
             "inherits_from": "mn-2x",
             "patch_size_multiplier": 6,
-            "channels": [16, 32, 64, 128, 256],
+            "architecture": {"arch_kwargs": {"channels": [16, 32, 64, 128, 256]}},
         },
         "mn-2x-s": {
             "inherits_from": "mn-2x",
             "patch_size_multiplier": 6,
-            "channels": [32, 64, 128, 256, 512],
+            "architecture": {"arch_kwargs": {"channels": [32, 64, 128, 256, 512]}},
         },
         "mn-2x-m": {
             "inherits_from": "mn-2x",
             "patch_size_multiplier": 6,
-            "channels": [48, 96, 192, 384, 768],
+            "architecture": {
+                "arch_kwargs": {
+                    "channels": [48, 96, 192, 384, 768],
+                }
+            },
         },
         "mn-3x-t": {
             "inherits_from": "mn-3x",
             "patch_size_multiplier": 8,
-            "channels": [32, 64, 128, 256],
+            "architecture": {
+                "arch_kwargs": {
+                    "channels": [32, 64, 128, 256],
+                }
+            },
         },
         "mn-3x-s": {
             "inherits_from": "mn-3x",
             "patch_size_multiplier": 8,
-            "channels": [64, 128, 256, 512],
+            "architecture": {
+                "arch_kwargs": {
+                    "channels": [64, 128, 256, 512],
+                }
+            },
         },
         "mn-3x-m": {
             "inherits_from": "mn-3x",
             "patch_size_multiplier": 8,
-            "channels": [96, 192, 384, 768],
+            "architecture": {
+                "arch_kwargs": {
+                    "channels": [96, 192, 384, 768],
+                }
+            },
         },
         "mn-4x-t": {
             "inherits_from": "mn-4x",
             "patch_size_multiplier": 6,
-            "channels": [32, 64, 128, 256],
+            "architecture": {
+                "arch_kwargs": {
+                    "channels": [32, 64, 128, 256],
+                }
+            },
         },
         "mn-4x-s": {
             "inherits_from": "mn-4x",
             "patch_size_multiplier": 6,
-            "channels": [64, 128, 256, 512],
+            "architecture": {
+                "arch_kwargs": {
+                    "channels": [64, 128, 256, 512],
+                }
+            },
         },
         "mn-4x-m": {
             "inherits_from": "mn-4x",
             "patch_size_multiplier": 6,
-            "channels": [96, 192, 384, 768],
+            "architecture": {
+                "arch_kwargs": {
+                    "channels": [96, 192, 384, 768],
+                }
+            },
         },
     }
 
-    @classmethod
-    def _configuration(cls, preset: dict) -> dict:
-        return {
-            "inherits_from": preset["inherits_from"],
-            "patch_size_multiplier": preset["patch_size_multiplier"],
-            "architecture": {
-                "arch_kwargs": {
-                    "channels": preset["channels"],
-                },
-            },
-        }
-
-    def _additional_configurations(self) -> dict:
-        configurations = super()._additional_configurations()
-        configurations.update(
-            {
-                name: self._configuration(preset)
-                for name, preset in self._presets.items()
-            }
-        )
-        return configurations
-
 
 class TemporaryPlanner(BaselinePlanner):
-    _temporary_configurations = {
+    _presets = {
         "mn-4x-t_000": {
             "inherits_from": "mn-4x-t",
         }
     }
-
-    def _additional_configurations(self) -> dict:
-        configurations = super()._additional_configurations()
-        configurations.update(deepcopy(self._temporary_configurations))
-        return configurations
