@@ -33,6 +33,7 @@ class UniversalInvertedBottleneckBlock(nn.Module):
         cc_num_experts: Optional[int] = None,
         cc_router_kernel_size: Optional[ShapeNd] = None,
         cc_router_stride: Optional[ShapeNd] = None,
+        layer_scale: Optional[float] = None,
         layers: UIBLayerConfig = None,
         stride_placement: Literal["in", "mid", "out"] = None,
     ):
@@ -65,23 +66,15 @@ class UniversalInvertedBottleneckBlock(nn.Module):
 
         # cc param check
         if cc_num_experts is not None:
-            assert cc_router_kernel_size is not None, "Router kernel size must be provided when CC is enabled."
-            assert cc_router_stride is not None, "Router stride must be provided when CC is enabled."
+            assert (
+                cc_router_kernel_size is not None
+            ), "Router kernel size must be provided when CC is enabled."
+            assert (
+                cc_router_stride is not None
+            ), "Router stride must be provided when CC is enabled."
 
         hidden_channels = round(expansion_ratio * in_channels)
         padding = compute_padding(ndim, kernel_size)
-
-        if cc_num_experts is not None:
-            self.add_module(
-                "router",
-                Router(
-                    ndim,
-                    in_channels,
-                    cc_router_kernel_size,
-                    cc_router_stride,
-                    cc_num_experts,
-                ),
-            )
 
         if layers.get("dw_in", None) is not None:
             self.add_module(
@@ -97,6 +90,18 @@ class UniversalInvertedBottleneckBlock(nn.Module):
                     normalization=normalization,
                     activation=activation,
                     layers=layers["dw_in"],
+                ),
+            )
+
+        if cc_num_experts is not None:
+            self.add_module(
+                "router",
+                Router(
+                    ndim,
+                    in_channels,
+                    cc_router_kernel_size,
+                    cc_router_stride,
+                    cc_num_experts,
                 ),
             )
 
@@ -169,6 +174,12 @@ class UniversalInvertedBottleneckBlock(nn.Module):
                 "se", SqueezeAndExcitationBlock(ndim, out_channels, se_reduction)
             )
 
+        self.layer_scale = (
+            nn.Parameter(torch.full([1, out_channels] + [1]*ndim, fill_value=layer_scale))
+            if layer_scale is not None
+            else None
+        )
+
         self._can_add_identity = all(s == 1 for s in ensure_ntuple(stride, ndim)) and (
             in_channels == out_channels
         )
@@ -186,7 +197,8 @@ class UniversalInvertedBottleneckBlock(nn.Module):
                 x = layer(x)
 
         if self._can_add_identity:
-            x = x + identity
+            residual = x * self.layer_scale if self.layer_scale is not None else x
+            x = residual + identity
         return x
 
 
@@ -228,6 +240,7 @@ class InvertedBottleneckBlock(UniversalInvertedBottleneckBlock):
             cc_num_experts=cc_num_experts,
             cc_router_kernel_size=cc_router_kernel_size,
             cc_router_stride=cc_router_stride,
+            layer_scale=None,
             layers=layers,
             stride_placement="mid",
         )
@@ -272,6 +285,7 @@ class PreDWInvertedBottleneckBlock(UniversalInvertedBottleneckBlock):
             cc_num_experts=cc_num_experts,
             cc_router_kernel_size=cc_router_kernel_size,
             cc_router_stride=cc_router_stride,
+            layer_scale=None,
             layers=layers,
             stride_placement="mid",
         )
@@ -293,6 +307,7 @@ class ConvNeXtBlock(UniversalInvertedBottleneckBlock):
         cc_num_experts: Optional[int] = None,
         cc_router_kernel_size: Optional[ShapeNd] = None,
         cc_router_stride: Optional[ShapeNd] = None,
+        layer_scale: float = 1e-6,
     ):
 
         layers = UIBLayerConfig(
@@ -315,6 +330,7 @@ class ConvNeXtBlock(UniversalInvertedBottleneckBlock):
             cc_num_experts=cc_num_experts,
             cc_router_kernel_size=cc_router_kernel_size,
             cc_router_stride=cc_router_stride,
+            layer_scale=layer_scale,
             layers=layers,
             stride_placement="in",
         )
