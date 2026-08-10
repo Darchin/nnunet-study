@@ -251,7 +251,10 @@ class Decoder(nn.Module):
                     block_factory,
                     channels[i + 1],
                     channels[i],
-                    expansion_ratios[i],
+                    # divide the expansion ratio for the first block in each stage by 3
+                    # because concatenating the encoder/decoder feature maps gives a feature map
+                    # with 3C channels.
+                    expansion_ratios[i] / 3,
                     kernel_sizes[i],
                     strides[i + 1],
                     normalization,
@@ -408,9 +411,10 @@ class MobileUNet(nn.Module):
             for block in stage.blocks:
                 if block._can_add_identity:
                     if hasattr(block.pw_out, "norm"):
-                        residual_norm = block.pw_out.norm
-                        if not isinstance(residual_norm, nn.Identity):
-                            zero_init(residual_norm)
+                        if not isinstance(block.pw_out.norm, nn.Identity):
+                            zero_init(block.pw_out.norm)
+                    else:
+                        zero_init(block.pw_out)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         x_enc: list[torch.Tensor] = self.encoder(x)
