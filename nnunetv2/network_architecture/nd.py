@@ -130,7 +130,9 @@ class GroupNormNd:
     ) -> nn.GroupNorm:
 
         _static_num_groups = num_groups is not None
-        _dynamic_num_groups = max_groups is not None and min_channels_per_group is not None
+        _dynamic_num_groups = (
+            max_groups is not None and min_channels_per_group is not None
+        )
 
         if _static_num_groups == _dynamic_num_groups:
             raise ValueError(
@@ -150,3 +152,31 @@ class GroupNormNd:
             *args,
             **kwargs,
         )
+
+
+class LayerNormNd(nn.Module):
+    def __init__(
+        self,
+        N: int,
+        num_channels: int,
+        affine: bool = True,
+        eps: float = 1e-5,
+    ) -> None:
+        super().__init__()
+
+        self.affine = affine
+
+        shape = [1, num_channels] + [1] * N
+        self.weight = nn.Parameter(torch.ones(shape)) if affine else None
+        self.bias = nn.Parameter(torch.zeros(shape)) if affine else None
+
+        self.eps = eps
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        var, mean = torch.var_mean(x, dim=1, keepdim=True, correction=0)
+        x = (x - mean) * torch.rsqrt(var + self.eps)
+
+        if self.affine:
+            x = self.weight * x + self.bias
+
+        return x
