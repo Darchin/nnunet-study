@@ -237,7 +237,7 @@ class InvertedBottleneckBlock(UniversalInvertedBottleneckBlock):
         )
 
 
-class PreDWInvertedBottleneckBlock(UniversalInvertedBottleneckBlock):
+class ExtraDWInvertedBottleneckBlock(UniversalInvertedBottleneckBlock):
     def __init__(
         self,
         ndim: int,
