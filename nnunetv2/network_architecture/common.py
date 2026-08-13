@@ -13,14 +13,16 @@ type ConvBlockOpSeq = Sequence[Literal["conv", "norm", "act"]]
 
 
 class SqueezeAndExcitationBlock(nn.Module):
-    def __init__(self, ndim: int, channels: int, reduction: float):
+    def __init__(
+        self, ndim: int, channels: int, reduction: float, activation: ModuleFactory
+    ):
         super().__init__()
         hidden_channels = int(max(1, channels // reduction))
 
         self.gap = AdaptiveAvgPoolNd(ndim, 1)
 
         self.pw1 = ConvNd(ndim, channels, hidden_channels, kernel_size=1)
-        self.act1 = nn.ReLU(inplace=True)
+        self.act1 = activation()
         self.pw2 = ConvNd(ndim, hidden_channels, channels, kernel_size=1)
         self.act2 = nn.Sigmoid()
 
