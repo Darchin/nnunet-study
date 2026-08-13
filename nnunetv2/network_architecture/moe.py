@@ -3,16 +3,42 @@ from functools import partial
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.nn.common_types import _size_any_t
 from nnunetv2.network_architecture.common import (
     ModuleFactory,
     ConvNd,
     AdaptiveAvgPoolNd,
     ConvBlock,
+    ConvBlockLayerOrder,
 )
 from nnunetv2.network_architecture.types import ShapeNd
-from nnunetv2.network_architecture.utils import compute_padding
-from nnunetv2.network_architecture.init import identity_init
+from nnunetv2.network_architecture.utils import compute_padding, ensure_ntuple
+
+type RouterLayerOrder = Sequence[
+    Literal["gap", "conv", "sigmoid", "softmax", "softplus", "norm"]
+]
+
+
+class Sigmoid(nn.Module):
+    def __init__(self, temperature: float = 1.0):
+        super().__init__()
+        self.temperature = temperature
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return F.sigmoid(x / self.temperature)
+
+
+class Softmax(nn.Module):
+    def __init__(self, temperature: float = 1.0):
+        super().__init__()
+        self.temperature = temperature
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return F.softmax(x / self.temperature, dim=1)
+
+
+class Normalize(nn.Module):
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return x / x.sum(dim=1, keepdim=True)
 
 
 class Router(nn.Module):
@@ -20,22 +46,54 @@ class Router(nn.Module):
         self,
         ndim: int,
         channels: int,
-        kernel_size: _size_any_t,
-        stride: _size_any_t,
+        kernel_size: ShapeNd,
+        stride: ShapeNd,
         num_experts: int,
+        layer_order: RouterLayerOrder,
     ):
         super().__init__()
+        self.layer_order = list(layer_order)
 
-        self.conv = ConvNd(
-            ndim,
-            channels,
-            num_experts,
-            kernel_size,
-            stride,
-            compute_padding(ndim, kernel_size),
+        assert set(self.layer_order).issubset(
+            {"gap", "conv", "sigmoid", "softmax", "softplus", "norm"}
         )
 
-        self.gap = AdaptiveAvgPoolNd(ndim, 1)
+        assert all(
+            l in self.layer_order for l in ["gap", "conv"]
+        ), "Both GAP and Conv must be present in the layer_order."
+
+        if self.layer_order.index("gap") < self.layer_order.index("conv"):
+            assert all(
+                k == 1 for k in ensure_ntuple(kernel_size, ndim)
+            ), "Post-GAP router convolution must be pointwise."
+            assert all(
+                s == 1 for s in ensure_ntuple(stride, ndim)
+            ), "Post-GAP router convolution cannot be strided."
+
+        for layer in layer_order:
+            match layer:
+                case "conv":
+                    self.add_module(
+                        "conv",
+                        ConvNd(
+                            ndim,
+                            channels,
+                            num_experts,
+                            kernel_size,
+                            stride,
+                            compute_padding(ndim, kernel_size),
+                        ),
+                    )
+                case "gap":
+                    self.add_module("gap", AdaptiveAvgPoolNd(ndim, 1))
+                case "sigmoid":
+                    self.add_module("sigmoid", Sigmoid())
+                case "softmax":
+                    self.add_module("softmax", Softmax())
+                case "softplus":
+                    self.add_module("softplus", nn.Softplus())
+                case "norm":
+                    self.add_module("norm", Normalize())
 
         self.reset_parameters()
 
@@ -45,14 +103,9 @@ class Router(nn.Module):
         nn.init.zeros_(self.conv.bias)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        logit_map = self.conv(x)
-        logit_gap = self.gap(logit_map)
-        logit_gap = logit_gap.squeeze(*list(range(2, logit_gap.ndim)))
-
-        scores_unnormalized = F.sigmoid(logit_gap)
-        scores = scores_unnormalized / scores_unnormalized.sum(dim=-1, keepdim=True)
-
-        return scores.squeeze()
+        for layer in self.children():
+            x = layer(x)
+        return x.squeeze(*list(range(2, x.ndim)))
 
 
 class CondPWConv(nn.Module):
@@ -114,14 +167,14 @@ class CondPWConvBlock(ConvBlock):
         bias: bool | None = None,
         normalization: ModuleFactory = nn.Identity,
         activation: ModuleFactory = nn.Identity,
-        cc_num_experts: Optional[int] = None,
-        layers: Sequence[Literal["conv", "norm", "act"]] = [
+        num_experts: Optional[int] = None,
+        layer_order: ConvBlockLayerOrder = [
             "conv",
             "norm",
             "act",
         ],
     ):
-        self._is_cc = cc_num_experts is not None
+        self._is_cc = num_experts is not None
 
         super().__init__(
             ndim=ndim,
@@ -133,13 +186,11 @@ class CondPWConvBlock(ConvBlock):
             groups=1,
             bias=bias,
             convolution=(
-                partial(CondPWConv, num_experts=cc_num_experts)
-                if self._is_cc
-                else ConvNd
+                partial(CondPWConv, num_experts=num_experts) if self._is_cc else ConvNd
             ),
             normalization=normalization,
             activation=activation,
-            layers=layers,
+            layer_order=layer_order,
         )
 
     def forward(
