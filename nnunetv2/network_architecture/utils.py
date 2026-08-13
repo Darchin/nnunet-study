@@ -1,15 +1,15 @@
-from collections.abc import Iterable
+from collections.abc import Sequence
 from typing import Any
 
 from torch.nn.common_types import _size_any_t
 
 
 def ensure_ntuple(x: Any, n: int):
-    if isinstance(x, Iterable):
+    if isinstance(x, Sequence):
         x = tuple(x)
         assert (
             len(x) == n
-        ), f"Length of input tuple {len(x)} does not match requested length of {n}."
+        ), f"Length of input sequence {len(x)} does not match requested length of {n}."
         return x
     return (x,) * n
 
