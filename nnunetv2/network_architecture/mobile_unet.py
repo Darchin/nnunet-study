@@ -12,6 +12,7 @@ from nnunetv2.network_architecture.nd import (
     LinearUpsampleNd,
 )
 from nnunetv2.network_architecture.uib import UniversalInvertedBottleneckBlock
+from nnunetv2.network_architecture.moe import RouterLayerOrder
 from nnunetv2.network_architecture.utils import (
     compute_padding,
     compute_output_padding,
@@ -34,9 +35,10 @@ class EncoderStage(nn.Module):
         activation: ModuleFactory,
         se_reduction: Optional[float],
         se_placement: Optional[Literal["in", "mid", "out"]],
-        cc_num_experts: Optional[int],
-        cc_router_kernel_size: Optional[ShapeNd],
-        cc_router_stride: Optional[ShapeNd],
+        moe_num_experts: Optional[int],
+        moe_router_kernel_size: Optional[ShapeNd],
+        moe_router_stride: Optional[ShapeNd],
+        moe_router_layer_order: Optional[RouterLayerOrder],
         depth: int,
     ):
         super().__init__()
@@ -56,9 +58,10 @@ class EncoderStage(nn.Module):
                 activation,
                 se_reduction,
                 se_placement,
-                cc_num_experts,
-                cc_router_kernel_size,
-                cc_router_stride,
+                moe_num_experts,
+                moe_router_kernel_size,
+                moe_router_stride,
+                moe_router_layer_order,
             )
         )
 
@@ -75,9 +78,10 @@ class EncoderStage(nn.Module):
                     activation,
                     se_reduction,
                     se_placement,
-                    cc_num_experts,
-                    cc_router_kernel_size,
-                    cc_router_stride,
+                    moe_num_experts,
+                    moe_router_kernel_size,
+                    moe_router_stride,
+                    moe_router_layer_order,
                 )
                 for _ in range(depth - 1)
             ]
@@ -106,9 +110,10 @@ class Encoder(nn.Module):
         activation: ModuleFactory,
         se_reduction: Optional[float],
         se_placement: Optional[Literal["in", "mid", "out"]],
-        cc_num_experts: Sequence[Optional[int]],
-        cc_router_kernel_size: Optional[ShapeNd],
-        cc_router_stride: Optional[ShapeNd],
+        moe_num_experts: Sequence[Optional[int]],
+        moe_router_kernel_size: Optional[ShapeNd],
+        moe_router_stride: Optional[ShapeNd],
+        moe_router_layer_order: Optional[RouterLayerOrder],
         depths: Sequence[int],
     ):
         super().__init__()
@@ -141,9 +146,10 @@ class Encoder(nn.Module):
                     activation,
                     se_reduction,
                     se_placement,
-                    cc_num_experts[i],
-                    cc_router_kernel_size,
-                    cc_router_stride,
+                    moe_num_experts[i],
+                    moe_router_kernel_size,
+                    moe_router_stride,
+                    moe_router_layer_order,
                     depths[i],
                 )
             )
@@ -316,9 +322,10 @@ class MobileUNetConfig:
     se_reduction: Optional[float] = None
     se_placement: Optional[Literal["mid", "out"]] = None
 
-    cc_num_experts: Sequence[Optional[int]] = None
-    cc_router_kernel_size: Optional[ShapeNd] = None
-    cc_router_stride: Optional[ShapeNd] = None
+    moe_num_experts: Sequence[Optional[int]] = None
+    moe_router_kernel_size: Optional[ShapeNd] = None
+    moe_router_stride: Optional[ShapeNd] = None
+    moe_router_layer_order: Optional[RouterLayerOrder] = None
 
     deep_supervision: bool = False
 
@@ -342,12 +349,12 @@ class MobileUNetConfig:
 
         assert self.se_placement in ["in", "mid", "out", None]
 
-        if self.cc_num_experts is not None:
-            self.cc_num_experts = ensure_ntuple(self.cc_num_experts, self.num_stages)
-            assert self.cc_router_kernel_size is not None
-            assert self.cc_router_stride is not None
+        if self.moe_num_experts is not None:
+            self.moe_num_experts = ensure_ntuple(self.moe_num_experts, self.num_stages)
+            assert self.moe_router_kernel_size is not None
+            assert self.moe_router_stride is not None
         else:
-            self.cc_num_experts = [None] * self.num_stages
+            self.moe_num_experts = [None] * self.num_stages
 
         assert len(self.encoder_depths) == self.num_stages
         assert len(self.decoder_depths) == self.num_stages - 1
@@ -381,9 +388,10 @@ class MobileUNet(nn.Module):
             config.activation,
             config.se_reduction,
             config.se_placement,
-            config.cc_num_experts,
-            config.cc_router_kernel_size,
-            config.cc_router_stride,
+            config.moe_num_experts,
+            config.moe_router_kernel_size,
+            config.moe_router_stride,
+            config.moe_router_layer_order,
             config.encoder_depths,
         )
 

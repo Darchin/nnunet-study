@@ -3,18 +3,22 @@ from typing import Literal, Optional, Sequence, TypedDict, NotRequired, Required
 import torch
 import torch.nn as nn
 
-from nnunetv2.network_architecture.common import ConvBlock, SqueezeAndExcitationBlock
-from nnunetv2.network_architecture.condconv import CondPWConvBlock, Router
+from nnunetv2.network_architecture.common import (
+    ConvBlockLayerOrder,
+    ConvBlock,
+    SqueezeAndExcitationBlock,
+)
+from nnunetv2.network_architecture.moe import CondPWConvBlock, Router, RouterLayerOrder
 from nnunetv2.network_architecture.types import ModuleFactory, ShapeNd
 from nnunetv2.network_architecture.utils import compute_padding, ensure_ntuple
 
 
-class UIBLayerConfig(TypedDict, total=False):
-    dw_in: NotRequired[Sequence[Literal["conv", "norm", "act"]]]
-    dw_mid: NotRequired[Sequence[Literal["conv", "norm", "act"]]]
-    dw_out: NotRequired[Sequence[Literal["conv", "norm", "act"]]]
-    pw_in: Required[Sequence[Literal["conv", "norm", "act"]]]
-    pw_out: Required[Sequence[Literal["conv", "norm", "act"]]]
+class UIBLayerOrder(TypedDict, total=False):
+    dw_in: NotRequired[ConvBlockLayerOrder]
+    dw_mid: NotRequired[ConvBlockLayerOrder]
+    dw_out: NotRequired[ConvBlockLayerOrder]
+    pw_in: Required[ConvBlockLayerOrder]
+    pw_out: Required[ConvBlockLayerOrder]
 
 
 class UniversalInvertedBottleneckBlock(nn.Module):
@@ -30,20 +34,22 @@ class UniversalInvertedBottleneckBlock(nn.Module):
         activation: ModuleFactory = nn.Identity,
         se_reduction: Optional[float] = None,
         se_placement: Optional[Literal["mid", "out"]] = None,
-        cc_num_experts: Optional[int] = None,
-        cc_router_kernel_size: Optional[ShapeNd] = None,
-        cc_router_stride: Optional[ShapeNd] = None,
-        layers: UIBLayerConfig = None,
+        moe_num_experts: Optional[int] = None,
+        moe_router_kernel_size: Optional[ShapeNd] = None,
+        moe_router_stride: Optional[ShapeNd] = None,
+        moe_router_layer_order: Optional[RouterLayerOrder] = None,
+        layer_order: UIBLayerOrder = None,
         stride_placement: Literal["in", "mid", "out"] = None,
     ):
         super().__init__()
 
         # layer order checks
-        assert layers is not None, "UIB subclasses must provide `layers`."
+        assert layer_order is not None, "UIB subclasses must provide `layer_order`."
 
         # stride placement checks
         if any(
-            layers.get(dw, None) is not None for dw in ["dw_in", "dw_mid", "dw_out"]
+            layer_order.get(dw, None) is not None
+            for dw in ["dw_in", "dw_mid", "dw_out"]
         ):
             assert (
                 stride_placement is not None
@@ -51,12 +57,12 @@ class UniversalInvertedBottleneckBlock(nn.Module):
 
         if stride_placement is not None:
             assert (
-                layers.get(f"dw_{stride_placement}", None) is not None
+                layer_order.get(f"dw_{stride_placement}", None) is not None
             ), "The depthwise convolution corresponding to the specified stride placement is `None`."
 
         assert all(
-            layers.get(pw, None) is not None for pw in ["pw_in", "pw_out"]
-        ), "Pointwise layers cannot be `None`."
+            layer_order.get(pw, None) is not None for pw in ["pw_in", "pw_out"]
+        ), "Pointwise layer_order cannot be `None`."
 
         # se param check
         assert (se_reduction is None) == (
@@ -64,18 +70,21 @@ class UniversalInvertedBottleneckBlock(nn.Module):
         ), "SE parameters must either all be provided or none must be provided."
 
         # cc param check
-        if cc_num_experts is not None:
+        if moe_num_experts is not None:
             assert (
-                cc_router_kernel_size is not None
-            ), "Router kernel size must be provided when CC is enabled."
+                moe_router_kernel_size is not None
+            ), "Router kernel size must be provided when MoE is enabled."
             assert (
-                cc_router_stride is not None
-            ), "Router stride must be provided when CC is enabled."
+                moe_router_stride is not None
+            ), "Router stride must be provided when MoE is enabled."
+            assert (
+                moe_router_layer_order is not None
+            ), "Router layer order must be provided when MoE is enabled."
 
         hidden_channels = round(expansion_ratio * in_channels)
         padding = compute_padding(ndim, kernel_size)
 
-        if layers.get("dw_in", None) is not None:
+        if layer_order.get("dw_in", None) is not None:
             self.add_module(
                 "dw_in",
                 ConvBlock(
@@ -88,19 +97,20 @@ class UniversalInvertedBottleneckBlock(nn.Module):
                     groups=in_channels,
                     normalization=normalization,
                     activation=activation,
-                    layers=layers["dw_in"],
+                    layer_order=layer_order["dw_in"],
                 ),
             )
 
-        if cc_num_experts is not None:
+        if moe_num_experts is not None:
             self.add_module(
                 "router",
                 Router(
                     ndim,
                     in_channels,
-                    cc_router_kernel_size,
-                    cc_router_stride,
-                    cc_num_experts,
+                    moe_router_kernel_size,
+                    moe_router_stride,
+                    moe_num_experts,
+                    moe_router_layer_order,
                 ),
             )
 
@@ -112,12 +122,12 @@ class UniversalInvertedBottleneckBlock(nn.Module):
                 out_channels=hidden_channels,
                 normalization=normalization,
                 activation=activation,
-                cc_num_experts=cc_num_experts,
-                layers=layers["pw_in"],
+                num_experts=moe_num_experts,
+                layer_order=layer_order["pw_in"],
             ),
         )
 
-        if layers.get("dw_mid", None) is not None:
+        if layer_order.get("dw_mid", None) is not None:
             self.add_module(
                 "dw_mid",
                 ConvBlock(
@@ -130,7 +140,7 @@ class UniversalInvertedBottleneckBlock(nn.Module):
                     groups=hidden_channels,
                     normalization=normalization,
                     activation=activation,
-                    layers=layers["dw_mid"],
+                    layer_order=layer_order["dw_mid"],
                 ),
             )
 
@@ -146,12 +156,12 @@ class UniversalInvertedBottleneckBlock(nn.Module):
                 in_channels=hidden_channels,
                 out_channels=out_channels,
                 normalization=normalization,
-                cc_num_experts=cc_num_experts,
-                layers=layers["pw_out"],
+                num_experts=moe_num_experts,
+                layer_order=layer_order["pw_out"],
             ),
         )
 
-        if layers.get("dw_out", None) is not None:
+        if layer_order.get("dw_out", None) is not None:
             self.add_module(
                 "dw_out",
                 ConvBlock(
@@ -164,7 +174,7 @@ class UniversalInvertedBottleneckBlock(nn.Module):
                     groups=out_channels,
                     normalization=normalization,
                     activation=activation,
-                    layers=layers["dw_out"],
+                    layer_order=layer_order["dw_out"],
                 ),
             )
 
@@ -207,12 +217,13 @@ class InvertedBottleneckBlock(UniversalInvertedBottleneckBlock):
         activation: ModuleFactory = nn.Identity,
         se_reduction: Optional[float] = None,
         se_placement: Optional[Literal["mid", "out"]] = None,
-        cc_num_experts: Optional[int] = None,
-        cc_router_kernel_size: Optional[ShapeNd] = None,
-        cc_router_stride: Optional[ShapeNd] = None,
+        moe_num_experts: Optional[int] = None,
+        moe_router_kernel_size: Optional[ShapeNd] = None,
+        moe_router_stride: Optional[ShapeNd] = None,
+        moe_router_layer_order: Optional[RouterLayerOrder] = None,
     ):
 
-        layers = UIBLayerConfig(
+        layer_order = UIBLayerOrder(
             dw_mid=["conv", "norm", "act"],
             pw_in=["conv", "norm", "act"],
             pw_out=["conv", "norm"],
@@ -229,10 +240,11 @@ class InvertedBottleneckBlock(UniversalInvertedBottleneckBlock):
             activation=activation,
             se_reduction=se_reduction,
             se_placement=se_placement,
-            cc_num_experts=cc_num_experts,
-            cc_router_kernel_size=cc_router_kernel_size,
-            cc_router_stride=cc_router_stride,
-            layers=layers,
+            moe_num_experts=moe_num_experts,
+            moe_router_kernel_size=moe_router_kernel_size,
+            moe_router_stride=moe_router_stride,
+            moe_router_layer_order=moe_router_layer_order,
+            layer_order=layer_order,
             stride_placement="mid",
         )
 
@@ -250,12 +262,13 @@ class ExtraDWInvertedBottleneckBlock(UniversalInvertedBottleneckBlock):
         activation: ModuleFactory = nn.Identity,
         se_reduction: Optional[float] = None,
         se_placement: Optional[Literal["mid", "out"]] = None,
-        cc_num_experts: Optional[int] = None,
-        cc_router_kernel_size: Optional[ShapeNd] = None,
-        cc_router_stride: Optional[ShapeNd] = None,
+        moe_num_experts: Optional[int] = None,
+        moe_router_kernel_size: Optional[ShapeNd] = None,
+        moe_router_stride: Optional[ShapeNd] = None,
+        moe_router_layer_order: Optional[RouterLayerOrder] = None,
     ):
 
-        layers = UIBLayerConfig(
+        layer_order = UIBLayerOrder(
             dw_in=["conv", "norm", "act"],
             dw_mid=["conv", "norm", "act"],
             pw_in=["conv", "norm", "act"],
@@ -273,10 +286,11 @@ class ExtraDWInvertedBottleneckBlock(UniversalInvertedBottleneckBlock):
             activation=activation,
             se_reduction=se_reduction,
             se_placement=se_placement,
-            cc_num_experts=cc_num_experts,
-            cc_router_kernel_size=cc_router_kernel_size,
-            cc_router_stride=cc_router_stride,
-            layers=layers,
+            moe_num_experts=moe_num_experts,
+            moe_router_kernel_size=moe_router_kernel_size,
+            moe_router_stride=moe_router_stride,
+            moe_router_layer_order=moe_router_layer_order,
+            layer_order=layer_order,
             stride_placement="mid",
         )
 
@@ -294,12 +308,13 @@ class ConvNeXtBlock(UniversalInvertedBottleneckBlock):
         activation: ModuleFactory = nn.Identity,
         se_reduction: Optional[float] = None,
         se_placement: Optional[Literal["mid", "out"]] = None,
-        cc_num_experts: Optional[int] = None,
-        cc_router_kernel_size: Optional[ShapeNd] = None,
-        cc_router_stride: Optional[ShapeNd] = None,
+        moe_num_experts: Optional[int] = None,
+        moe_router_kernel_size: Optional[ShapeNd] = None,
+        moe_router_stride: Optional[ShapeNd] = None,
+        moe_router_layer_order: Optional[RouterLayerOrder] = None,
     ):
 
-        layers = UIBLayerConfig(
+        layer_order = UIBLayerOrder(
             dw_in=["norm", "conv"],
             pw_in=["conv", "act"],
             pw_out=["conv"],
@@ -316,9 +331,10 @@ class ConvNeXtBlock(UniversalInvertedBottleneckBlock):
             activation=activation,
             se_reduction=se_reduction,
             se_placement=se_placement,
-            cc_num_experts=cc_num_experts,
-            cc_router_kernel_size=cc_router_kernel_size,
-            cc_router_stride=cc_router_stride,
-            layers=layers,
+            moe_num_experts=moe_num_experts,
+            moe_router_kernel_size=moe_router_kernel_size,
+            moe_router_stride=moe_router_stride,
+            moe_router_layer_order=moe_router_layer_order,
+            layer_order=layer_order,
             stride_placement="in",
         )

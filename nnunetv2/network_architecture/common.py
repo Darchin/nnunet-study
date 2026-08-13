@@ -1,5 +1,5 @@
 from functools import partial
-from typing import Literal, Optional, Sequence
+from typing import Literal, Sequence
 
 import torch
 import torch.nn as nn
@@ -8,6 +8,8 @@ from nnunetv2.network_architecture.nd import AdaptiveAvgPoolNd, ConvNd, ConvTran
 from nnunetv2.network_architecture.types import ModuleFactory, ShapeNd
 from nnunetv2.network_architecture.utils import ensure_ntuple
 from nnunetv2.network_architecture.init import identity_init
+
+type ConvBlockLayerOrder = Sequence[Literal["conv", "norm", "act"]]
 
 
 class SqueezeAndExcitationBlock(nn.Module):
@@ -53,7 +55,7 @@ class ConvBlock(nn.Module):
         convolution: ModuleFactory = ConvNd,
         normalization: ModuleFactory = nn.Identity,
         activation: ModuleFactory = nn.Identity,
-        layers: Sequence[Literal["conv", "norm", "act"]] = [
+        layer_order: ConvBlockLayerOrder = [
             "conv",
             "norm",
             "act",
@@ -61,8 +63,8 @@ class ConvBlock(nn.Module):
     ):
         super().__init__()
 
-        assert "conv" in set(layers)
-        assert set(layers).issubset({"conv", "norm", "act"})
+        assert "conv" in set(layer_order)
+        assert set(layer_order).issubset({"conv", "norm", "act"})
 
         self._norm_is_identity = issubclass(
             normalization.func if isinstance(normalization, partial) else normalization,
@@ -72,7 +74,7 @@ class ConvBlock(nn.Module):
         _has_bias = bias or self._norm_is_identity
 
         channels = in_channels
-        for layer in layers:
+        for layer in layer_order:
             match layer:
                 case "conv":
                     self.add_module(
