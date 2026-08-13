@@ -9,7 +9,7 @@ from nnunetv2.network_architecture.types import ModuleFactory, ShapeNd
 from nnunetv2.network_architecture.utils import ensure_ntuple
 from nnunetv2.network_architecture.init import identity_init
 
-type ConvBlockLayerOrder = Sequence[Literal["conv", "norm", "act"]]
+type ConvBlockOpSeq = Sequence[Literal["conv", "norm", "act"]]
 
 
 class SqueezeAndExcitationBlock(nn.Module):
@@ -55,7 +55,7 @@ class ConvBlock(nn.Module):
         convolution: ModuleFactory = ConvNd,
         normalization: ModuleFactory = nn.Identity,
         activation: ModuleFactory = nn.Identity,
-        layer_order: ConvBlockLayerOrder = [
+        op_seq: ConvBlockOpSeq = [
             "conv",
             "norm",
             "act",
@@ -63,8 +63,8 @@ class ConvBlock(nn.Module):
     ):
         super().__init__()
 
-        assert "conv" in set(layer_order)
-        assert set(layer_order).issubset({"conv", "norm", "act"})
+        assert "conv" in set(op_seq)
+        assert set(op_seq).issubset({"conv", "norm", "act"})
 
         self._norm_is_identity = issubclass(
             normalization.func if isinstance(normalization, partial) else normalization,
@@ -74,8 +74,8 @@ class ConvBlock(nn.Module):
         _has_bias = bias or self._norm_is_identity
 
         channels = in_channels
-        for layer in layer_order:
-            match layer:
+        for op in op_seq:
+            match op:
                 case "conv":
                     self.add_module(
                         "conv",

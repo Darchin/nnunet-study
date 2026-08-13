@@ -8,12 +8,12 @@ from nnunetv2.network_architecture.common import (
     ConvNd,
     AdaptiveAvgPoolNd,
     ConvBlock,
-    ConvBlockLayerOrder,
+    ConvBlockOpSeq,
 )
 from nnunetv2.network_architecture.types import ShapeNd
 from nnunetv2.network_architecture.utils import compute_padding, ensure_ntuple
 
-type RouterLayerOrder = Sequence[
+type RouterOpSeq = Sequence[
     Literal["gap", "conv", "sigmoid", "softmax", "softplus", "norm"]
 ]
 
@@ -49,20 +49,20 @@ class Router(nn.Module):
         kernel_size: ShapeNd,
         stride: ShapeNd,
         num_experts: int,
-        layer_order: RouterLayerOrder,
+        op_seq: RouterOpSeq,
     ):
         super().__init__()
-        self.layer_order = list(layer_order)
+        self.op_seq = list(op_seq)
 
-        assert set(self.layer_order).issubset(
+        assert set(self.op_seq).issubset(
             {"gap", "conv", "sigmoid", "softmax", "softplus", "norm"}
         )
 
         assert all(
-            l in self.layer_order for l in ["gap", "conv"]
-        ), "Both GAP and Conv must be present in the layer_order."
+            op in self.op_seq for op in ["gap", "conv"]
+        ), "Both GAP and Conv must be present in the op_seq."
 
-        if self.layer_order.index("gap") < self.layer_order.index("conv"):
+        if self.op_seq.index("gap") < self.op_seq.index("conv"):
             assert all(
                 k == 1 for k in ensure_ntuple(kernel_size, ndim)
             ), "Post-GAP router convolution must be pointwise."
@@ -70,8 +70,8 @@ class Router(nn.Module):
                 s == 1 for s in ensure_ntuple(stride, ndim)
             ), "Post-GAP router convolution cannot be strided."
 
-        for layer in layer_order:
-            match layer:
+        for op in op_seq:
+            match op:
                 case "conv":
                     self.add_module(
                         "conv",
@@ -168,7 +168,7 @@ class CondPWConvBlock(ConvBlock):
         normalization: ModuleFactory = nn.Identity,
         activation: ModuleFactory = nn.Identity,
         num_experts: Optional[int] = None,
-        layer_order: ConvBlockLayerOrder = [
+        op_seq: ConvBlockOpSeq = [
             "conv",
             "norm",
             "act",
@@ -190,7 +190,7 @@ class CondPWConvBlock(ConvBlock):
             ),
             normalization=normalization,
             activation=activation,
-            layer_order=layer_order,
+            op_seq=op_seq,
         )
 
     def forward(

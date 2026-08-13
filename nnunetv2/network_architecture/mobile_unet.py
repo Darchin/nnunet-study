@@ -12,7 +12,7 @@ from nnunetv2.network_architecture.nd import (
     LinearUpsampleNd,
 )
 from nnunetv2.network_architecture.uib import UniversalInvertedBottleneckBlock
-from nnunetv2.network_architecture.moe import RouterLayerOrder
+from nnunetv2.network_architecture.moe import RouterOpSeq
 from nnunetv2.network_architecture.utils import (
     compute_padding,
     compute_output_padding,
@@ -38,7 +38,7 @@ class EncoderStage(nn.Module):
         moe_num_experts: Optional[int],
         moe_router_kernel_size: Optional[ShapeNd],
         moe_router_stride: Optional[ShapeNd],
-        moe_router_layer_order: Optional[RouterLayerOrder],
+        moe_router_op_seq: Optional[RouterOpSeq],
         depth: int,
     ):
         super().__init__()
@@ -61,7 +61,7 @@ class EncoderStage(nn.Module):
                 moe_num_experts,
                 moe_router_kernel_size,
                 moe_router_stride,
-                moe_router_layer_order,
+                moe_router_op_seq,
             )
         )
 
@@ -81,7 +81,7 @@ class EncoderStage(nn.Module):
                     moe_num_experts,
                     moe_router_kernel_size,
                     moe_router_stride,
-                    moe_router_layer_order,
+                    moe_router_op_seq,
                 )
                 for _ in range(depth - 1)
             ]
@@ -113,7 +113,7 @@ class Encoder(nn.Module):
         moe_num_experts: Sequence[Optional[int]],
         moe_router_kernel_size: Optional[ShapeNd],
         moe_router_stride: Optional[ShapeNd],
-        moe_router_layer_order: Optional[RouterLayerOrder],
+        moe_router_op_seq: Optional[RouterOpSeq],
         depths: Sequence[int],
     ):
         super().__init__()
@@ -149,7 +149,7 @@ class Encoder(nn.Module):
                     moe_num_experts[i],
                     moe_router_kernel_size,
                     moe_router_stride,
-                    moe_router_layer_order,
+                    moe_router_op_seq,
                     depths[i],
                 )
             )
@@ -325,7 +325,7 @@ class MobileUNetConfig:
     moe_num_experts: Sequence[Optional[int]] = None
     moe_router_kernel_size: Optional[ShapeNd] = None
     moe_router_stride: Optional[ShapeNd] = None
-    moe_router_layer_order: Optional[RouterLayerOrder] = None
+    moe_router_op_seq: Optional[RouterOpSeq] = None
 
     deep_supervision: bool = False
 
@@ -391,7 +391,7 @@ class MobileUNet(nn.Module):
             config.moe_num_experts,
             config.moe_router_kernel_size,
             config.moe_router_stride,
-            config.moe_router_layer_order,
+            config.moe_router_op_seq,
             config.encoder_depths,
         )
 
