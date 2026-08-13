@@ -90,12 +90,12 @@ class UniversalInvertedBottleneckBlock(nn.Module):
             self.add_module(
                 "router",
                 Router(
-                    ndim,
-                    in_channels,
-                    moe_config["router_kernel_size"],
-                    moe_config["router_stride"],
-                    moe_config["num_experts"],
-                    moe_config["router_op_seq"],
+                    ndim=ndim,
+                    channels=in_channels,
+                    num_experts=moe_config["num_experts"],
+                    kernel_size=moe_config["router_kernel_size"],
+                    stride=moe_config["router_stride"],
+                    op_seq=moe_config["router_op_seq"],
                 ),
             )
 
