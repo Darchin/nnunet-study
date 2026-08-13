@@ -1,5 +1,5 @@
 from functools import partial
-from typing import Sequence, Any, Optional, Literal
+from typing import Sequence, Any, Optional
 from dataclasses import dataclass, InitVar, field
 
 import torch
@@ -11,8 +11,11 @@ from nnunetv2.network_architecture.nd import (
     ConvTransposeNd,
     LinearUpsampleNd,
 )
-from nnunetv2.network_architecture.uib import UniversalInvertedBottleneckBlock
-from nnunetv2.network_architecture.moe import RouterOpSeq
+from nnunetv2.network_architecture.uib import (
+    UniversalInvertedBottleneckBlock,
+    SEConfig,
+    MoEConfig,
+)
 from nnunetv2.network_architecture.utils import (
     compute_padding,
     compute_output_padding,
@@ -33,12 +36,8 @@ class EncoderStage(nn.Module):
         stride: ShapeNd,
         normalization: ModuleFactory,
         activation: ModuleFactory,
-        se_reduction: Optional[float],
-        se_placement: Optional[Literal["in", "mid", "out"]],
-        moe_num_experts: Optional[int],
-        moe_router_kernel_size: Optional[ShapeNd],
-        moe_router_stride: Optional[ShapeNd],
-        moe_router_op_seq: Optional[RouterOpSeq],
+        se_config: SEConfig,
+        moe_config: MoEConfig,
         depth: int,
     ):
         super().__init__()
@@ -56,12 +55,8 @@ class EncoderStage(nn.Module):
                 stride,
                 normalization,
                 activation,
-                se_reduction,
-                se_placement,
-                moe_num_experts,
-                moe_router_kernel_size,
-                moe_router_stride,
-                moe_router_op_seq,
+                se_config,
+                moe_config,
             )
         )
 
@@ -76,12 +71,8 @@ class EncoderStage(nn.Module):
                     1,
                     normalization,
                     activation,
-                    se_reduction,
-                    se_placement,
-                    moe_num_experts,
-                    moe_router_kernel_size,
-                    moe_router_stride,
-                    moe_router_op_seq,
+                    se_config,
+                    moe_config,
                 )
                 for _ in range(depth - 1)
             ]
@@ -108,12 +99,8 @@ class Encoder(nn.Module):
         strides: Sequence[ShapeNd],
         normalization: ModuleFactory,
         activation: ModuleFactory,
-        se_reduction: Optional[float],
-        se_placement: Optional[Literal["in", "mid", "out"]],
-        moe_num_experts: Sequence[Optional[int]],
-        moe_router_kernel_size: Optional[ShapeNd],
-        moe_router_stride: Optional[ShapeNd],
-        moe_router_op_seq: Optional[RouterOpSeq],
+        se_configs: Sequence[SEConfig],
+        moe_configs: Sequence[MoEConfig],
         depths: Sequence[int],
     ):
         super().__init__()
@@ -144,12 +131,8 @@ class Encoder(nn.Module):
                     strides[i],
                     normalization,
                     activation,
-                    se_reduction,
-                    se_placement,
-                    moe_num_experts[i],
-                    moe_router_kernel_size,
-                    moe_router_stride,
-                    moe_router_op_seq,
+                    se_configs[i],
+                    moe_configs[i],
                     depths[i],
                 )
             )
@@ -319,13 +302,8 @@ class MobileUNetConfig:
     encoder_depths: Sequence[int]
     decoder_depths: Sequence[int]
 
-    se_reduction: Optional[float] = None
-    se_placement: Optional[Literal["mid", "out"]] = None
-
-    moe_num_experts: Sequence[Optional[int]] = None
-    moe_router_kernel_size: Optional[ShapeNd] = None
-    moe_router_stride: Optional[ShapeNd] = None
-    moe_router_op_seq: Optional[RouterOpSeq] = None
+    se_configs: SEConfig | Sequence[SEConfig] = field(default_factory=dict)
+    moe_configs: MoEConfig | Sequence[MoEConfig] = field(default_factory=dict)
 
     deep_supervision: bool = False
 
@@ -347,14 +325,8 @@ class MobileUNetConfig:
         self.normalization = partial(norm_layer, **norm_kwargs)
         self.activation = partial(act_layer, **act_kwargs)
 
-        assert self.se_placement in ["in", "mid", "out", None]
-
-        if self.moe_num_experts is not None:
-            self.moe_num_experts = ensure_ntuple(self.moe_num_experts, self.num_stages)
-            assert self.moe_router_kernel_size is not None
-            assert self.moe_router_stride is not None
-        else:
-            self.moe_num_experts = [None] * self.num_stages
+        self.se_configs = ensure_ntuple(self.se_configs, self.num_stages)
+        self.moe_configs = ensure_ntuple(self.moe_configs, self.num_stages)
 
         assert len(self.encoder_depths) == self.num_stages
         assert len(self.decoder_depths) == self.num_stages - 1
@@ -386,12 +358,8 @@ class MobileUNet(nn.Module):
             config.strides,
             config.normalization,
             config.activation,
-            config.se_reduction,
-            config.se_placement,
-            config.moe_num_experts,
-            config.moe_router_kernel_size,
-            config.moe_router_stride,
-            config.moe_router_op_seq,
+            config.se_configs,
+            config.moe_configs,
             config.encoder_depths,
         )
 

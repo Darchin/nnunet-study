@@ -1,14 +1,15 @@
-from typing import Literal, Optional, Sequence, TypedDict, NotRequired, Required
+from functools import partial
+from typing import Literal, NotRequired, Required, TypedDict
 
 import torch
 import torch.nn as nn
 
 from nnunetv2.network_architecture.common import (
-    ConvBlockOpSeq,
     ConvBlock,
+    ConvBlockOpSeq,
     SqueezeAndExcitationBlock,
 )
-from nnunetv2.network_architecture.moe import CondPWConvBlock, Router, RouterOpSeq
+from nnunetv2.network_architecture.moe import MoEPWConvBlock, Router, RouterOpSeq
 from nnunetv2.network_architecture.types import ModuleFactory, ShapeNd
 from nnunetv2.network_architecture.utils import compute_padding, ensure_ntuple
 
@@ -19,6 +20,18 @@ class UIBOpSeq(TypedDict, total=False):
     dw_out: NotRequired[ConvBlockOpSeq]
     pw_in: Required[ConvBlockOpSeq]
     pw_out: Required[ConvBlockOpSeq]
+
+
+class SEConfig(TypedDict):
+    reduction: float
+    placement: Literal["in", "mid", "out"]
+
+
+class MoEConfig(TypedDict):
+    num_experts: int
+    router_kernel_size: ShapeNd
+    router_stride: ShapeNd
+    router_op_seq: RouterOpSeq
 
 
 class UniversalInvertedBottleneckBlock(nn.Module):
@@ -32,24 +45,19 @@ class UniversalInvertedBottleneckBlock(nn.Module):
         stride: ShapeNd = 1,
         normalization: ModuleFactory = nn.Identity,
         activation: ModuleFactory = nn.Identity,
-        se_reduction: Optional[float] = None,
-        se_placement: Optional[Literal["mid", "out"]] = None,
-        moe_num_experts: Optional[int] = None,
-        moe_router_kernel_size: Optional[ShapeNd] = None,
-        moe_router_stride: Optional[ShapeNd] = None,
-        moe_router_op_seq: Optional[RouterOpSeq] = None,
+        se_config: SEConfig = {},
+        moe_config: MoEConfig = {},
         op_seq: UIBOpSeq = None,
         stride_placement: Literal["in", "mid", "out"] = None,
     ):
         super().__init__()
 
-        # layer order checks
+        # < some validation + variable setup > #
         assert op_seq is not None, "UIB subclasses must provide `op_seq`."
 
         # stride placement checks
         if any(
-            op_seq.get(dw, None) is not None
-            for dw in ["dw_in", "dw_mid", "dw_out"]
+            op_seq.get(dw, None) is not None for dw in ["dw_in", "dw_mid", "dw_out"]
         ):
             assert (
                 stride_placement is not None
@@ -64,25 +72,32 @@ class UniversalInvertedBottleneckBlock(nn.Module):
             op_seq.get(pw, None) is not None for pw in ["pw_in", "pw_out"]
         ), "Pointwise op_seq cannot be `None`."
 
-        # se param check
-        assert (se_reduction is None) == (
-            se_placement is None
-        ), "SE parameters must either all be provided or none must be provided."
-
-        # cc param check
-        if moe_num_experts is not None:
-            assert (
-                moe_router_kernel_size is not None
-            ), "Router kernel size must be provided when MoE is enabled."
-            assert (
-                moe_router_stride is not None
-            ), "Router stride must be provided when MoE is enabled."
-            assert (
-                moe_router_op_seq is not None
-            ), "Router operator sequence must be provided when MoE is enabled."
-
         hidden_channels = round(expansion_ratio * in_channels)
         padding = compute_padding(ndim, kernel_size)
+
+        # intentioanlly not assigning `nn.Identity` to `se_op`
+        # within the `else` branch to avoid silent failures
+        if se_config:
+            se_op = partial(
+                SqueezeAndExcitationBlock,
+                ndim=ndim,
+                reduction=se_config["reduction"],
+                activation=activation,
+            )
+
+        # < start of adding the layers themselves > #
+        if moe_config:
+            self.add_module(
+                "router",
+                Router(
+                    ndim,
+                    in_channels,
+                    moe_config["router_kernel_size"],
+                    moe_config["router_stride"],
+                    moe_config["num_experts"],
+                    moe_config["router_op_seq"],
+                ),
+            )
 
         if op_seq.get("dw_in", None) is not None:
             self.add_module(
@@ -101,28 +116,15 @@ class UniversalInvertedBottleneckBlock(nn.Module):
                 ),
             )
 
-        if moe_num_experts is not None:
-            self.add_module(
-                "router",
-                Router(
-                    ndim,
-                    in_channels,
-                    moe_router_kernel_size,
-                    moe_router_stride,
-                    moe_num_experts,
-                    moe_router_op_seq,
-                ),
-            )
-
         self.add_module(
             "pw_in",
-            CondPWConvBlock(
+            MoEPWConvBlock(
                 ndim,
                 in_channels=in_channels,
                 out_channels=hidden_channels,
                 normalization=normalization,
                 activation=activation,
-                num_experts=moe_num_experts,
+                num_experts=moe_config.get("num_experts"),
                 op_seq=op_seq["pw_in"],
             ),
         )
@@ -144,19 +146,20 @@ class UniversalInvertedBottleneckBlock(nn.Module):
                 ),
             )
 
-        if se_placement == "mid":
+        if se_config.get("placement") == "mid":
             self.add_module(
-                "se", SqueezeAndExcitationBlock(ndim, hidden_channels, se_reduction)
+                "se",
+                se_op(channels=hidden_channels),
             )
 
         self.add_module(
             "pw_out",
-            CondPWConvBlock(
+            MoEPWConvBlock(
                 ndim,
                 in_channels=hidden_channels,
                 out_channels=out_channels,
                 normalization=normalization,
-                num_experts=moe_num_experts,
+                num_experts=moe_config.get("num_experts"),
                 op_seq=op_seq["pw_out"],
             ),
         )
@@ -178,9 +181,10 @@ class UniversalInvertedBottleneckBlock(nn.Module):
                 ),
             )
 
-        if se_placement == "out":
+        if se_config.get("placement") == "out":
             self.add_module(
-                "se", SqueezeAndExcitationBlock(ndim, out_channels, se_reduction)
+                "se",
+                se_op(channels=out_channels),
             )
 
         self._can_add_identity = all(s == 1 for s in ensure_ntuple(stride, ndim)) and (
@@ -215,12 +219,8 @@ class InvertedBottleneckBlock(UniversalInvertedBottleneckBlock):
         stride: ShapeNd = 1,
         normalization: ModuleFactory = nn.Identity,
         activation: ModuleFactory = nn.Identity,
-        se_reduction: Optional[float] = None,
-        se_placement: Optional[Literal["mid", "out"]] = None,
-        moe_num_experts: Optional[int] = None,
-        moe_router_kernel_size: Optional[ShapeNd] = None,
-        moe_router_stride: Optional[ShapeNd] = None,
-        moe_router_op_seq: Optional[RouterOpSeq] = None,
+        se_config: SEConfig = {},
+        moe_config: MoEConfig = {},
     ):
 
         op_seq = UIBOpSeq(
@@ -238,12 +238,8 @@ class InvertedBottleneckBlock(UniversalInvertedBottleneckBlock):
             stride=stride,
             normalization=normalization,
             activation=activation,
-            se_reduction=se_reduction,
-            se_placement=se_placement,
-            moe_num_experts=moe_num_experts,
-            moe_router_kernel_size=moe_router_kernel_size,
-            moe_router_stride=moe_router_stride,
-            moe_router_op_seq=moe_router_op_seq,
+            se_config=se_config,
+            moe_config=moe_config,
             op_seq=op_seq,
             stride_placement="mid",
         )
@@ -260,12 +256,8 @@ class ExtraDWInvertedBottleneckBlock(UniversalInvertedBottleneckBlock):
         stride: ShapeNd = 1,
         normalization: ModuleFactory = nn.Identity,
         activation: ModuleFactory = nn.Identity,
-        se_reduction: Optional[float] = None,
-        se_placement: Optional[Literal["mid", "out"]] = None,
-        moe_num_experts: Optional[int] = None,
-        moe_router_kernel_size: Optional[ShapeNd] = None,
-        moe_router_stride: Optional[ShapeNd] = None,
-        moe_router_op_seq: Optional[RouterOpSeq] = None,
+        se_config: SEConfig = {},
+        moe_config: MoEConfig = {},
     ):
 
         op_seq = UIBOpSeq(
@@ -284,12 +276,8 @@ class ExtraDWInvertedBottleneckBlock(UniversalInvertedBottleneckBlock):
             stride=stride,
             normalization=normalization,
             activation=activation,
-            se_reduction=se_reduction,
-            se_placement=se_placement,
-            moe_num_experts=moe_num_experts,
-            moe_router_kernel_size=moe_router_kernel_size,
-            moe_router_stride=moe_router_stride,
-            moe_router_op_seq=moe_router_op_seq,
+            se_config=se_config,
+            moe_config=moe_config,
             op_seq=op_seq,
             stride_placement="mid",
         )
@@ -306,12 +294,8 @@ class ConvNeXtBlock(UniversalInvertedBottleneckBlock):
         stride: ShapeNd = 1,
         normalization: ModuleFactory = nn.Identity,
         activation: ModuleFactory = nn.Identity,
-        se_reduction: Optional[float] = None,
-        se_placement: Optional[Literal["mid", "out"]] = None,
-        moe_num_experts: Optional[int] = None,
-        moe_router_kernel_size: Optional[ShapeNd] = None,
-        moe_router_stride: Optional[ShapeNd] = None,
-        moe_router_op_seq: Optional[RouterOpSeq] = None,
+        se_config: SEConfig = {},
+        moe_config: MoEConfig = {},
     ):
 
         op_seq = UIBOpSeq(
@@ -329,12 +313,8 @@ class ConvNeXtBlock(UniversalInvertedBottleneckBlock):
             stride=stride,
             normalization=normalization,
             activation=activation,
-            se_reduction=se_reduction,
-            se_placement=se_placement,
-            moe_num_experts=moe_num_experts,
-            moe_router_kernel_size=moe_router_kernel_size,
-            moe_router_stride=moe_router_stride,
-            moe_router_op_seq=moe_router_op_seq,
+            se_config=se_config,
+            moe_config=moe_config,
             op_seq=op_seq,
             stride_placement="in",
         )

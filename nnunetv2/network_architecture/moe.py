@@ -46,9 +46,9 @@ class Router(nn.Module):
         self,
         ndim: int,
         channels: int,
+        num_experts: int,
         kernel_size: ShapeNd,
         stride: ShapeNd,
-        num_experts: int,
         op_seq: RouterOpSeq,
     ):
         super().__init__()
@@ -108,18 +108,20 @@ class Router(nn.Module):
         return x.squeeze(*list(range(2, x.ndim)))
 
 
-class CondPWConv(nn.Module):
+class MoEPWConv(nn.Module):
     def __init__(
         self,
         in_channels: int,
         out_channels: int,
-        bias: bool = True,
         num_experts: int = 1,
+        bias: bool = True,
         *args,
         **kwargs,
         # args/kwargs added to ensure compatibility with ConvBlock's conv initializer
     ):
         super().__init__()
+        self.in_channels = in_channels
+        self.out_channels = out_channels
         self.num_experts = num_experts
 
         self.weight = nn.Parameter(torch.empty(num_experts, out_channels, in_channels))
@@ -130,6 +132,13 @@ class CondPWConv(nn.Module):
             self.bias = None
 
         self.reset_parameters()
+
+    # taken from PyTorch's _ConvNd module
+    def extra_repr(self):
+        s = "{in_channels}, {out_channels}, num_experts={num_experts}"
+        if self.bias is None:
+            s += ", bias=False"
+        return s.format(**self.__dict__)
 
     def reset_parameters(self):
         # initialize experts
@@ -158,7 +167,7 @@ class CondPWConv(nn.Module):
         return x
 
 
-class CondPWConvBlock(ConvBlock):
+class MoEPWConvBlock(ConvBlock):
     def __init__(
         self,
         ndim: int,
@@ -174,7 +183,7 @@ class CondPWConvBlock(ConvBlock):
             "act",
         ],
     ):
-        self._is_cc = num_experts is not None
+        self._is_moe = num_experts is not None
 
         super().__init__(
             ndim=ndim,
@@ -186,7 +195,7 @@ class CondPWConvBlock(ConvBlock):
             groups=1,
             bias=bias,
             convolution=(
-                partial(CondPWConv, num_experts=num_experts) if self._is_cc else ConvNd
+                partial(MoEPWConv, num_experts=num_experts) if self._is_moe else ConvNd
             ),
             normalization=normalization,
             activation=activation,
@@ -206,7 +215,7 @@ class CondPWConvBlock(ConvBlock):
         """
         for name, layer in self.named_children():
             if name == "conv":
-                if self._is_cc:
+                if self._is_moe:
                     assert scores is not None
                     x = layer(x, scores)
                 else:
