@@ -1,5 +1,5 @@
 from functools import partial
-from typing import Literal, NotRequired, Required, TypedDict
+from typing import Iterable, Literal, NotRequired, Optional, Required, TypedDict
 
 import torch
 import torch.nn as nn
@@ -9,7 +9,12 @@ from nnunetv2.network_architecture.common import (
     ConvBlockOpSeq,
     SqueezeAndExcitationBlock,
 )
-from nnunetv2.network_architecture.moe import MoEPWConvBlock, Router, RouterOpSeq
+from nnunetv2.network_architecture.moe import (
+    MoEBackend,
+    MoEConvBlock,
+    Router,
+    RouterOpSeq,
+)
 from nnunetv2.network_architecture.types import ModuleFactory, ShapeNd
 from nnunetv2.network_architecture.utils import compute_padding, ensure_ntuple
 
@@ -29,6 +34,8 @@ class SEConfig(TypedDict):
 
 class MoEConfig(TypedDict):
     num_experts: int
+    pw_backend: Optional[MoEBackend] = None
+    dw_backend: Optional[MoEBackend] = None
     router_kernel_size: ShapeNd
     router_stride: ShapeNd
     router_op_seq: RouterOpSeq
@@ -85,6 +92,26 @@ class UniversalInvertedBottleneckBlock(nn.Module):
                 activation=activation,
             )
 
+        dw_op = (
+            partial(
+                MoEConvBlock,
+                num_experts=moe_config["num_experts"],
+                backend=moe_config["dw_backend"],
+            )
+            if moe_config and moe_config.get("dw_backend") is not None
+            else ConvBlock
+        )
+
+        pw_op = (
+            partial(
+                MoEConvBlock,
+                num_experts=moe_config["num_experts"],
+                backend=moe_config["pw_backend"],
+            )
+            if moe_config and moe_config.get("pw_backend") is not None
+            else ConvBlock
+        )
+
         # < start of adding the layers themselves > #
         if moe_config:
             self.add_module(
@@ -99,10 +126,11 @@ class UniversalInvertedBottleneckBlock(nn.Module):
                 ),
             )
 
+        # Input depthwise conv
         if op_seq.get("dw_in", None) is not None:
             self.add_module(
                 "dw_in",
-                ConvBlock(
+                dw_op(
                     ndim,
                     in_channels=in_channels,
                     out_channels=in_channels,
@@ -116,23 +144,24 @@ class UniversalInvertedBottleneckBlock(nn.Module):
                 ),
             )
 
+        # Input pointwise conv
         self.add_module(
             "pw_in",
-            MoEPWConvBlock(
+            pw_op(
                 ndim,
                 in_channels=in_channels,
                 out_channels=hidden_channels,
                 normalization=normalization,
                 activation=activation,
-                num_experts=moe_config.get("num_experts"),
                 op_seq=op_seq["pw_in"],
             ),
         )
 
+        # Middle depthwise conv
         if op_seq.get("dw_mid", None) is not None:
             self.add_module(
                 "dw_mid",
-                ConvBlock(
+                dw_op(
                     ndim,
                     in_channels=hidden_channels,
                     out_channels=hidden_channels,
@@ -146,28 +175,31 @@ class UniversalInvertedBottleneckBlock(nn.Module):
                 ),
             )
 
+        # Middle SE
         if se_config.get("placement") == "mid":
             self.add_module(
                 "se",
                 se_op(channels=hidden_channels),
             )
 
+        # Output pointwise conv
         self.add_module(
             "pw_out",
-            MoEPWConvBlock(
+            pw_op(
                 ndim,
                 in_channels=hidden_channels,
                 out_channels=out_channels,
                 normalization=normalization,
-                num_experts=moe_config.get("num_experts"),
+                activation=activation,
                 op_seq=op_seq["pw_out"],
             ),
         )
 
+        # Output depthwise conv
         if op_seq.get("dw_out", None) is not None:
             self.add_module(
                 "dw_out",
-                ConvBlock(
+                dw_op(
                     ndim,
                     in_channels=out_channels,
                     out_channels=out_channels,
@@ -181,6 +213,7 @@ class UniversalInvertedBottleneckBlock(nn.Module):
                 ),
             )
 
+        # Output SE
         if se_config.get("placement") == "out":
             self.add_module(
                 "se",
@@ -193,12 +226,11 @@ class UniversalInvertedBottleneckBlock(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         identity = x
-        scores = None
 
-        for name, layer in self.named_children():
-            if name == "router":
+        for layer in self.children():
+            if isinstance(layer, Router):
                 scores = layer(x)
-            elif "pw" in name:
+            elif isinstance(layer, MoEConvBlock):
                 x = layer(x, scores)
             else:
                 x = layer(x)
