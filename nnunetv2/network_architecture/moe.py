@@ -212,7 +212,7 @@ class MoEConvNd(nn.Module):
 
         weight, bias = self.blend_params(scores)
         weight = weight.flatten(0, 1)
-        bias = bias.flatten(0, 1) if self.bias else None
+        bias = bias.flatten(0, 1) if self.bias is not None else None
 
         B = x.shape[0]
         x = x.flatten(0, 1)
@@ -253,7 +253,7 @@ class MoEConvNd(nn.Module):
         conv_op = [F.conv1d, F.conv2d, F.conv3d][self.N - 1]
 
         weight = self.weight.flatten(0, 1)
-        bias = self.bias.flatten(0, 1) if self.bias else None
+        bias = self.bias.flatten(0, 1) if self.bias is not None else None
 
         x = conv_op(
             input=x,
@@ -331,4 +331,6 @@ class MoEConvBlock(ConvBlock):
         for name, layer in self.named_children():
             if name == "conv":
                 x = layer(x, scores)
+            else:
+                x = layer(x)
         return x
