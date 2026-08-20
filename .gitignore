@@ -122,4 +122,5 @@ AGENTS.md
 
 nnUNet_*/
 Cleaned_results/
+benchmarks/
 *.ipynb
