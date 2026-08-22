@@ -386,11 +386,11 @@ class MobileUNet(nn.Module):
         for stage in self.encoder.stages + self.decoder.stages:
             for block in stage.blocks:
                 if block._can_add_identity:
-                    if hasattr(block.pw_out, "norm"):
-                        if not isinstance(block.pw_out.norm, nn.Identity):
-                            zero_init(block.pw_out.norm)
+                    if hasattr(block.pw_post, "norm"):
+                        if not isinstance(block.pw_post.norm, nn.Identity):
+                            zero_init(block.pw_post.norm)
                     else:
-                        zero_init(block.pw_out)
+                        zero_init(block.pw_post)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         x_enc: list[torch.Tensor] = self.encoder(x)

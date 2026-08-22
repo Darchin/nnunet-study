@@ -447,7 +447,7 @@ class SetOnePlanner(MobileUNetPlanner):
 
         new_configs = configs | norm_configs | block_configs
         for block, norm in zip(block_configs, norm_configs):
-            new_configs[f"MN-4x-S-{block}-{norm}"] = {"inherits_from": ["MN-4x-S", block, norm]}
+            new_configs[f"MN-4x-S_{block}_{norm}"] = {"inherits_from": ["MN-4x-S", block, norm]}
         
         return new_configs
 

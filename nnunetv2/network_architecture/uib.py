@@ -20,16 +20,16 @@ from nnunetv2.network_architecture.utils import compute_padding, ensure_ntuple
 
 
 class UIBOpSeq(TypedDict, total=False):
-    dw_in: NotRequired[ConvBlockOpSeq]
+    dw_pre: NotRequired[ConvBlockOpSeq]
     dw_mid: NotRequired[ConvBlockOpSeq]
-    dw_out: NotRequired[ConvBlockOpSeq]
-    pw_in: Required[ConvBlockOpSeq]
-    pw_out: Required[ConvBlockOpSeq]
+    dw_post: NotRequired[ConvBlockOpSeq]
+    pw_pre: Required[ConvBlockOpSeq]
+    pw_post: Required[ConvBlockOpSeq]
 
 
 class SEConfig(TypedDict):
     reduction: float
-    placement: Literal["in", "mid", "out"]
+    placement: Literal["pre", "mid", "post"]
 
 
 class MoEConfig(TypedDict):
@@ -55,7 +55,7 @@ class UniversalInvertedBottleneckBlock(nn.Module):
         se_config: SEConfig = {},
         moe_config: MoEConfig = {},
         op_seq: UIBOpSeq = None,
-        stride_placement: Literal["in", "mid", "out"] = None,
+        stride_placement: Literal["pre", "mid", "post"] = None,
     ):
         super().__init__()
 
@@ -64,7 +64,8 @@ class UniversalInvertedBottleneckBlock(nn.Module):
 
         # stride placement checks
         if any(
-            op_seq.get(dw, None) is not None for dw in ["dw_in", "dw_mid", "dw_out"]
+            op_seq.get(dw, None) is not None
+            for dw in ["dw_pre", "dw_mid", "dw_post"]
         ):
             assert (
                 stride_placement is not None
@@ -76,7 +77,7 @@ class UniversalInvertedBottleneckBlock(nn.Module):
             ), "The depthwise convolution corresponding to the specified stride placement is `None`."
 
         assert all(
-            op_seq.get(pw, None) is not None for pw in ["pw_in", "pw_out"]
+            op_seq.get(pw, None) is not None for pw in ["pw_pre", "pw_post"]
         ), "Pointwise op_seq cannot be `None`."
 
         hidden_channels = round(expansion_ratio * in_channels)
@@ -126,38 +127,38 @@ class UniversalInvertedBottleneckBlock(nn.Module):
                 ),
             )
 
-        # Input depthwise conv
-        if op_seq.get("dw_in", None) is not None:
+        # Pre depthwise conv
+        if op_seq.get("dw_pre", None) is not None:
             self.add_module(
-                "dw_in",
+                "dw_pre",
                 dw_op(
                     ndim,
                     in_channels=in_channels,
                     out_channels=in_channels,
                     kernel_size=kernel_size,
-                    stride=stride if stride_placement == "in" else 1,
+                    stride=stride if stride_placement == "pre" else 1,
                     padding=padding,
                     groups=in_channels,
                     normalization=normalization,
                     activation=activation,
-                    op_seq=op_seq["dw_in"],
+                    op_seq=op_seq["dw_pre"],
                 ),
             )
 
-        # Input pointwise conv
+        # Pre pointwise conv
         self.add_module(
-            "pw_in",
+            "pw_pre",
             pw_op(
                 ndim,
                 in_channels=in_channels,
                 out_channels=hidden_channels,
                 normalization=normalization,
                 activation=activation,
-                op_seq=op_seq["pw_in"],
+                op_seq=op_seq["pw_pre"],
             ),
         )
 
-        # Middle depthwise conv
+        # Mid depthwise conv
         if op_seq.get("dw_mid", None) is not None:
             self.add_module(
                 "dw_mid",
@@ -175,46 +176,46 @@ class UniversalInvertedBottleneckBlock(nn.Module):
                 ),
             )
 
-        # Middle SE
+        # Mid SE
         if se_config.get("placement") == "mid":
             self.add_module(
                 "se",
                 se_op(channels=hidden_channels),
             )
 
-        # Output pointwise conv
+        # Post pointwise conv
         self.add_module(
-            "pw_out",
+            "pw_post",
             pw_op(
                 ndim,
                 in_channels=hidden_channels,
                 out_channels=out_channels,
                 normalization=normalization,
                 activation=activation,
-                op_seq=op_seq["pw_out"],
+                op_seq=op_seq["pw_post"],
             ),
         )
 
-        # Output depthwise conv
-        if op_seq.get("dw_out", None) is not None:
+        # Post depthwise conv
+        if op_seq.get("dw_post", None) is not None:
             self.add_module(
-                "dw_out",
+                "dw_post",
                 dw_op(
                     ndim,
                     in_channels=out_channels,
                     out_channels=out_channels,
                     kernel_size=kernel_size,
-                    stride=stride if stride_placement == "out" else 1,
+                    stride=stride if stride_placement == "post" else 1,
                     padding=padding,
                     groups=out_channels,
                     normalization=normalization,
                     activation=activation,
-                    op_seq=op_seq["dw_out"],
+                    op_seq=op_seq["dw_post"],
                 ),
             )
 
-        # Output SE
-        if se_config.get("placement") == "out":
+        # Post SE
+        if se_config.get("placement") == "post":
             self.add_module(
                 "se",
                 se_op(channels=out_channels),
@@ -256,9 +257,9 @@ class PreDWMultilayerPerceptronBlock(UniversalInvertedBottleneckBlock):
     ):
 
         op_seq = UIBOpSeq(
-            dw_in=["conv", "norm", "act"],
-            pw_in=["conv", "norm", "act"],
-            pw_out=["conv", "norm"],
+            dw_pre=["conv", "norm", "act"],
+            pw_pre=["conv", "norm", "act"],
+            pw_post=["conv", "norm"],
         )
 
         super().__init__(
@@ -273,7 +274,7 @@ class PreDWMultilayerPerceptronBlock(UniversalInvertedBottleneckBlock):
             se_config=se_config,
             moe_config=moe_config,
             op_seq=op_seq,
-            stride_placement="in",
+            stride_placement="pre",
         )
 
 
@@ -294,8 +295,8 @@ class InvertedBottleneckBlock(UniversalInvertedBottleneckBlock):
 
         op_seq = UIBOpSeq(
             dw_mid=["conv", "norm", "act"],
-            pw_in=["conv", "norm", "act"],
-            pw_out=["conv", "norm"],
+            pw_pre=["conv", "norm", "act"],
+            pw_post=["conv", "norm"],
         )
 
         super().__init__(
@@ -330,10 +331,10 @@ class PreDWInvertedBottleneckBlock(UniversalInvertedBottleneckBlock):
     ):
 
         op_seq = UIBOpSeq(
-            dw_in=["conv", "norm", "act"],
+            dw_pre=["conv", "norm", "act"],
             dw_mid=["conv", "norm", "act"],
-            pw_in=["conv", "norm", "act"],
-            pw_out=["conv", "norm"],
+            pw_pre=["conv", "norm", "act"],
+            pw_post=["conv", "norm"],
         )
 
         super().__init__(
@@ -368,9 +369,9 @@ class ConvNeXtBlock(UniversalInvertedBottleneckBlock):
     ):
 
         op_seq = UIBOpSeq(
-            dw_in=["conv", "norm"],
-            pw_in=["conv", "act"],
-            pw_out=["conv"],
+            dw_pre=["conv", "norm"],
+            pw_pre=["conv", "act"],
+            pw_post=["conv"],
         )
 
         super().__init__(
@@ -385,5 +386,5 @@ class ConvNeXtBlock(UniversalInvertedBottleneckBlock):
             se_config=se_config,
             moe_config=moe_config,
             op_seq=op_seq,
-            stride_placement="in",
+            stride_placement="pre",
         )
