@@ -785,7 +785,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         help="Number of GPUs assigned to each job. Default: 1.",
     )
     parser.add_argument(
-        "--disable_tta",
+        "--disable-tta",
         action="store_true",
         default=False,
         help="Disable test-time augmentation during post-training validation.",
