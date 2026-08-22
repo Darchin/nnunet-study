@@ -123,26 +123,28 @@ class GroupNormNd:
         affine: bool = True,
         eps: float = 1e-5,
         num_groups: int | None = None,
-        max_groups: int | None = None,
-        min_channels_per_group: int | None = None,
+        num_channels_per_group: int | None = None,
         *args,
         **kwargs,
     ) -> nn.GroupNorm:
 
-        _static_num_groups = num_groups is not None
-        _dynamic_num_groups = (
-            max_groups is not None and min_channels_per_group is not None
+        assert (
+            num_groups is not None != num_channels_per_group is not None
+        ), "Exactly one of `num_groups` or `num_channels_per_group` must be set."
+        if num_channels_per_group is not None:
+            assert (
+                num_channels % num_channels_per_group == 0
+            ), "Number of channels must be divisible by the provided number of channels per group."
+        if num_groups is not None:
+            assert (
+                num_channels % num_groups == 0
+            ), "Number of channels must be divisible by the provided number of groups."
+
+        _num_groups = (
+            num_groups
+            if num_groups is not None
+            else num_channels // num_channels_per_group
         )
-
-        if _static_num_groups == _dynamic_num_groups:
-            raise ValueError(
-                "The number of groups must be specified in exactly one way."
-            )
-
-        if _static_num_groups:
-            _num_groups = num_groups
-        if _dynamic_num_groups:
-            _num_groups = min(num_channels // min_channels_per_group, max_groups)
 
         return nn.GroupNorm(
             num_groups=_num_groups,
