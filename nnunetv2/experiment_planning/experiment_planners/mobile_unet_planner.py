@@ -380,7 +380,9 @@ class ConvNeXtPlanner(MobileUNetPlanner):
 class SetOnePlanner(MobileUNetPlanner):
     @property
     def configs(self):
-        return {
+        configs = super().configs
+
+        norm_configs = {
             "IN": {
                 "architecture": {
                     "arch_kwargs": {
@@ -398,18 +400,56 @@ class SetOnePlanner(MobileUNetPlanner):
             "GN-G1": {
                 "architecture": {
                     "arch_kwargs": {
-                        "norm_layer": "nnunetv2.network_architecture.nd.LayerNormNd"
+                        "norm_layer": "nnunetv2.network_architecture.nd.GroupNormNd",
+                        "norm_kwargs": {"num_groups": 1},
                     }
                 }
             },
-            "GN-G32": {
+            "GN-CH16": {
                 "architecture": {
                     "arch_kwargs": {
-                        "norm_layer": "nnunetv2.network_architecture.nd.LayerNormNd"
+                        "norm_layer": "nnunetv2.network_architecture.nd.GroupNormNd",
+                        "norm_kwargs": {"num_channels_per_group": 16},
                     }
                 }
             },
         }
+        block_configs = {
+            "CN": {
+                "architecture": {
+                    "arch_kwargs": {
+                        "block_factory": "nnunetv2.network_architecture.uib.ConvNeXtBlock"
+                    }
+                }
+            },
+            "IB": {
+                "architecture": {
+                    "arch_kwargs": {
+                        "block_factory": "nnunetv2.network_architecture.uib.InvertedBottleneckBlock"
+                    }
+                }
+            },
+            "PMLP": {
+                "architecture": {
+                    "arch_kwargs": {
+                        "block_factory": "nnunetv2.network_architecture.uib.PreDWMultilayerPerceptronBlock"
+                    }
+                }
+            },
+            "PIB": {
+                "architecture": {
+                    "arch_kwargs": {
+                        "block_factory": "nnunetv2.network_architecture.uib.PreDWInvertedBottleneckBlock"
+                    }
+                }
+            },
+        }
+
+        new_configs = configs | norm_configs | block_configs
+        for block, norm in zip(block_configs, norm_configs):
+            new_configs[f"MN-4x-S-{block}-{norm}"] = {"inherits_from": ["MN-4x-S", block, norm]}
+        
+        return new_configs
 
 
 class MobileUNetMoEPlanner(MobileUNetPlanner):
