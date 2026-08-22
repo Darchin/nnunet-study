@@ -240,6 +240,43 @@ class UniversalInvertedBottleneckBlock(nn.Module):
         return x
 
 
+class PreDWMultilayerPerceptronBlock(UniversalInvertedBottleneckBlock):
+    def __init__(
+        self,
+        ndim: int,
+        in_channels: int,
+        out_channels: int,
+        expansion_ratio: float,
+        kernel_size: ShapeNd = 1,
+        stride: ShapeNd = 1,
+        normalization: ModuleFactory = nn.Identity,
+        activation: ModuleFactory = nn.Identity,
+        se_config: SEConfig = {},
+        moe_config: MoEConfig = {},
+    ):
+
+        op_seq = UIBOpSeq(
+            dw_in=["conv", "norm", "act"],
+            pw_in=["conv", "norm", "act"],
+            pw_out=["conv", "norm"],
+        )
+
+        super().__init__(
+            ndim=ndim,
+            in_channels=in_channels,
+            out_channels=out_channels,
+            expansion_ratio=expansion_ratio,
+            kernel_size=kernel_size,
+            stride=stride,
+            normalization=normalization,
+            activation=activation,
+            se_config=se_config,
+            moe_config=moe_config,
+            op_seq=op_seq,
+            stride_placement="in",
+        )
+
+
 class InvertedBottleneckBlock(UniversalInvertedBottleneckBlock):
     def __init__(
         self,
@@ -277,7 +314,7 @@ class InvertedBottleneckBlock(UniversalInvertedBottleneckBlock):
         )
 
 
-class ExtraDWInvertedBottleneckBlock(UniversalInvertedBottleneckBlock):
+class PreDWInvertedBottleneckBlock(UniversalInvertedBottleneckBlock):
     def __init__(
         self,
         ndim: int,
@@ -331,7 +368,7 @@ class ConvNeXtBlock(UniversalInvertedBottleneckBlock):
     ):
 
         op_seq = UIBOpSeq(
-            dw_in=["norm", "conv"],
+            dw_in=["conv", "norm"],
             pw_in=["conv", "act"],
             pw_out=["conv"],
         )
