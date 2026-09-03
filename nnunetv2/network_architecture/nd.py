@@ -127,23 +127,22 @@ class GroupNormNd:
         *args,
         **kwargs,
     ) -> nn.GroupNorm:
-
-        assert (
-            num_groups is not None != num_channels_per_group is not None
+        assert (num_groups is not None) != (
+            num_channels_per_group is not None
         ), "Exactly one of `num_groups` or `num_channels_per_group` must be set."
         if num_channels_per_group is not None:
             assert (
                 num_channels % num_channels_per_group == 0
-            ), "Number of channels must be divisible by the provided number of channels per group."
+            ), f"Number of channels ({num_channels}) must be divisible by the provided number of channels per group ({num_channels_per_group})."
         if num_groups is not None:
             assert (
                 num_channels % num_groups == 0
-            ), "Number of channels must be divisible by the provided number of groups."
+            ), f"Number of channels ({num_channels}) must be divisible by the provided number of groups ({num_groups})."
 
         _num_groups = (
             num_groups
-            if num_groups is not None
-            else num_channels // num_channels_per_group
+            or
+            num_channels // num_channels_per_group
         )
 
         return nn.GroupNorm(
