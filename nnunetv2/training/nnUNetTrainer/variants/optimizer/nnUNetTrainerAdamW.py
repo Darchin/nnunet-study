@@ -2,6 +2,7 @@ import math
 
 import torch
 
+from nnunetv2.network_architecture.moe import Router
 from nnunetv2.training.nnUNetTrainer.nnUNetTrainer import nnUNetTrainer
 
 
@@ -41,6 +42,17 @@ class LinearWarmupCosineAnnealingLR:
         return self._last_lr
 
 
+class LinearRouterTemperatureScheduler:
+    def __init__(self, start_val: float, end_val: float, end_epoch: int):
+        self.start_val = start_val
+        self.end_val = end_val
+        self.end_epoch = end_epoch
+
+    def get_value(self, epoch: int) -> float:
+        progress = min(max(epoch / self.end_epoch, 0), 1)
+        return self.start_val + (self.end_val - self.start_val) * progress
+
+
 class nnUNetTrainerAdamW(nnUNetTrainer):
     configurable_trainer_keys = {
         'initial_lr',
@@ -49,6 +61,7 @@ class nnUNetTrainerAdamW(nnUNetTrainer):
         'warmup_epochs',
         'min_lr',
         'enable_deep_supervision',
+        'router_schedule',
     }
 
     def __init__(self, plans: dict, configuration: str, fold: int, dataset_json: dict,
@@ -61,6 +74,7 @@ class nnUNetTrainerAdamW(nnUNetTrainer):
         self.warmup_epochs = 5
         self.min_lr = 1e-6
         self.enable_deep_supervision = False
+        self.router_scheduler = None
         self._apply_trainer_configuration()
 
     @staticmethod
@@ -113,6 +127,40 @@ class nnUNetTrainerAdamW(nnUNetTrainer):
                     f"{type(trainer_config['enable_deep_supervision']).__name__}"
                 )
             self.enable_deep_supervision = trainer_config['enable_deep_supervision']
+        if trainer_config.get('router_schedule') is not None:
+            router_schedule = trainer_config['router_schedule']
+            if not isinstance(router_schedule, dict):
+                raise TypeError(
+                    f"trainer.router_schedule must be a dict or None, got {type(router_schedule).__name__}"
+                )
+            required_keys = {'start_val', 'end_val', 'end_epoch'}
+            missing_keys = required_keys - set(router_schedule)
+            unknown_keys = set(router_schedule) - required_keys
+            if missing_keys:
+                raise ValueError(
+                    f"Missing trainer.router_schedule keys: {sorted(missing_keys)}"
+                )
+            if unknown_keys:
+                raise ValueError(
+                    f"Unknown trainer.router_schedule keys: {sorted(unknown_keys)}"
+                )
+
+            start_val = self._require_real(
+                router_schedule['start_val'], 'router_schedule.start_val', 0
+            )
+            end_val = self._require_real(
+                router_schedule['end_val'], 'router_schedule.end_val', 0
+            )
+            end_epoch = self._require_int(
+                router_schedule['end_epoch'], 'router_schedule.end_epoch'
+            )
+            if end_epoch <= 0:
+                raise ValueError(
+                    f"trainer.router_schedule.end_epoch must be > 0, got {end_epoch}"
+                )
+            self.router_scheduler = LinearRouterTemperatureScheduler(
+                start_val, end_val, end_epoch
+            )
 
         if self.warmup_epochs < 2:
             raise ValueError(
@@ -132,3 +180,18 @@ class nnUNetTrainerAdamW(nnUNetTrainer):
             optimizer, self.initial_lr, self.warmup_epochs, self.num_epochs, self.min_lr
         )
         return optimizer, lr_scheduler
+
+    def _update_router_temperatures(self):
+        if self.router_scheduler is None:
+            return
+
+        temperature = self.router_scheduler.get_value(self.current_epoch)
+        for module in self.network.modules():
+            if isinstance(module, Router):
+                for child in module.children():
+                    if hasattr(child, 'temperature'):
+                        child.temperature = temperature
+
+    def on_train_epoch_start(self):
+        super().on_train_epoch_start()
+        self._update_router_temperatures()
