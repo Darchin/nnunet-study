@@ -123,4 +123,5 @@ AGENTS.md
 nnUNet_*/
 Cleaned_results/
 benchmarks/
+pre_conversion_data/
 *.ipynb
