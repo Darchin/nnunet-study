@@ -161,6 +161,8 @@ class DecoderStage(nn.Module):
         stride: ShapeNd,
         normalization: ModuleFactory,
         activation: ModuleFactory,
+        se_config: SEConfig,
+        moe_config: MoEConfig,
         depth: int,
     ):
         super().__init__()
@@ -185,6 +187,8 @@ class DecoderStage(nn.Module):
                 1,
                 normalization,
                 activation,
+                se_config,
+                moe_config,
             )
         )
 
@@ -199,6 +203,8 @@ class DecoderStage(nn.Module):
                     1,
                     normalization,
                     activation,
+                    se_config,
+                    moe_config,
                 )
                 for _ in range(depth - 1)
             ]
@@ -227,6 +233,8 @@ class Decoder(nn.Module):
         strides: Sequence[ShapeNd],
         normalization: ModuleFactory,
         activation: ModuleFactory,
+        se_configs: Sequence[SEConfig],
+        moe_configs: Sequence[MoEConfig],
         depths: Sequence[int],
     ):
         super().__init__()
@@ -240,14 +248,19 @@ class Decoder(nn.Module):
                     block_factory,
                     channels[i + 1],
                     channels[i],
-                    # divide the expansion ratio for the first block in each stage by 3
-                    # because concatenating the encoder/decoder feature maps gives a feature map
-                    # with 3C channels.
-                    expansion_ratios[i] / 3,
+                    # concatenating the encoder/decoder feature maps gives a feature map
+                    # with roughly ~3x the number of channels. The expansion ratio
+                    # works off the input channels, so this causes the first decoder block
+                    # to have a very wide MLP. We can divide by the factor below to effectively
+                    # base the expansion ratio off of the output number of channels
+                    # which is equivalent to the "standard" embedding dim of that decoder stage.
+                    expansion_ratios[i] * channels[i] / (channels[i] + channels[i + 1]),
                     kernel_sizes[i],
                     strides[i + 1],
                     normalization,
                     activation,
+                    se_configs[i],
+                    moe_configs[i],
                     depths[i],
                 )
             )
@@ -302,8 +315,10 @@ class MobileUNetConfig:
     encoder_depths: Sequence[int]
     decoder_depths: Sequence[int]
 
-    se_configs: SEConfig | Sequence[SEConfig] = field(default_factory=dict)
-    moe_configs: MoEConfig | Sequence[MoEConfig] = field(default_factory=dict)
+    encoder_se_configs: SEConfig | Sequence[SEConfig] = field(default_factory=dict)
+    encoder_moe_configs: MoEConfig | Sequence[MoEConfig] = field(default_factory=dict)
+    decoder_se_configs: SEConfig | Sequence[SEConfig] = field(default_factory=dict)
+    decoder_moe_configs: MoEConfig | Sequence[MoEConfig] = field(default_factory=dict)
 
     deep_supervision: bool = False
 
@@ -325,8 +340,18 @@ class MobileUNetConfig:
         self.normalization = partial(norm_layer, **norm_kwargs)
         self.activation = partial(act_layer, **act_kwargs)
 
-        self.se_configs = ensure_ntuple(self.se_configs, self.num_stages)
-        self.moe_configs = ensure_ntuple(self.moe_configs, self.num_stages)
+        self.encoder_se_configs = ensure_ntuple(
+            self.encoder_se_configs, self.num_stages
+        )
+        self.encoder_moe_configs = ensure_ntuple(
+            self.encoder_moe_configs, self.num_stages
+        )
+        self.decoder_se_configs = ensure_ntuple(
+            self.decoder_se_configs, self.num_stages - 1
+        )
+        self.decoder_moe_configs = ensure_ntuple(
+            self.decoder_moe_configs, self.num_stages - 1
+        )
 
         assert len(self.encoder_depths) == self.num_stages
         assert len(self.decoder_depths) == self.num_stages - 1
@@ -358,8 +383,8 @@ class MobileUNet(nn.Module):
             config.strides,
             config.normalization,
             config.activation,
-            config.se_configs,
-            config.moe_configs,
+            config.encoder_se_configs,
+            config.encoder_moe_configs,
             config.encoder_depths,
         )
 
@@ -376,6 +401,8 @@ class MobileUNet(nn.Module):
             config.strides,
             config.normalization,
             config.activation,
+            config.decoder_se_configs,
+            config.decoder_moe_configs,
             config.decoder_depths,
         )
 
