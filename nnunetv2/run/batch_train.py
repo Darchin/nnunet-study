@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import subprocess
 import sys
@@ -17,7 +18,7 @@ from batchgenerators.utilities.file_and_folder_operations import load_json
 from rich.console import Console
 from rich.table import Table
 
-from nnunetv2.paths import nnUNet_preprocessed
+from nnunetv2.paths import nnUNet_preprocessed, nnUNet_results
 from nnunetv2.run.run_training import find_free_network_port, maybe_load_checkpoint
 from nnunetv2.utilities.dataset_name_id_conversion import maybe_convert_to_dataset_name
 from nnunetv2.utilities.find_objects import recursive_find_trainer_class_by_name
@@ -57,6 +58,7 @@ JOBS_DIR = join(PROJECT_ROOT, "jobs")
 STARTED_COLOR = "deep_sky_blue1"
 FINISHED_COLOR = "chartreuse3"
 FAILED_COLOR = "red3"
+SKIPPED_COLOR = "yellow"
 
 
 def format_duration(seconds: float) -> str:
@@ -241,7 +243,11 @@ def validate_json_array(
 
 def load_job_pairs_from_json(json_file: str) -> list[JobPair]:
     json_file = resolve_job_json_file(json_file)
-    job_specs = load_json(json_file)
+    if json_file.endswith(".jsonc"):
+        with open(json_file, encoding="utf-8") as file:
+            job_specs = json.loads(strip_json_comments(file.read()))
+    else:
+        job_specs = load_json(json_file)
     if not isinstance(job_specs, list):
         raise ValueError("Job JSON must contain a top-level array.")
     if not job_specs:
@@ -304,19 +310,64 @@ def load_job_pairs_from_json(json_file: str) -> list[JobPair]:
     return job_pairs
 
 
+def strip_json_comments(contents: str) -> str:
+    """Remove JSONC comments while preserving comment markers inside strings."""
+    result: list[str] = []
+    index = 0
+    in_string = False
+    escaped = False
+    while index < len(contents):
+        character = contents[index]
+        next_character = contents[index + 1] if index + 1 < len(contents) else ""
+
+        if in_string:
+            result.append(character)
+            if escaped:
+                escaped = False
+            elif character == "\\":
+                escaped = True
+            elif character == '"':
+                in_string = False
+            index += 1
+            continue
+
+        if character == '"':
+            in_string = True
+            result.append(character)
+            index += 1
+        elif character == "/" and next_character == "/":
+            index += 2
+            while index < len(contents) and contents[index] not in "\r\n":
+                index += 1
+        elif character == "/" and next_character == "*":
+            index += 2
+            while index + 1 < len(contents) and contents[index : index + 2] != "*/":
+                if contents[index] in "\r\n":
+                    result.append(contents[index])
+                index += 1
+            index += 2
+        else:
+            result.append(character)
+            index += 1
+
+    return "".join(result)
+
+
 def resolve_job_json_file(json_file: str) -> str:
-    if not json_file.endswith(".json"):
-        jobs_candidate = abspath(join(JOBS_DIR, json_file + ".json"))
-        if isfile(jobs_candidate):
-            return jobs_candidate
+    if not json_file.endswith((".json", ".jsonc")):
+        for extension in (".json", ".jsonc"):
+            jobs_candidate = abspath(join(JOBS_DIR, json_file + extension))
+            if isfile(jobs_candidate):
+                return jobs_candidate
         raise FileNotFoundError(
-            f"Job JSON file does not exist in {JOBS_DIR}: {json_file}.json"
+            f"Job JSON/JSONC file does not exist in {JOBS_DIR}: "
+            f"{json_file}.json or {json_file}.jsonc"
         )
 
     direct_candidate = json_file if isabs(json_file) else abspath(json_file)
     if isfile(direct_candidate):
         return direct_candidate
-    raise FileNotFoundError(f"Job JSON file does not exist: {direct_candidate}")
+    raise FileNotFoundError(f"Job JSON/JSONC file does not exist: {direct_candidate}")
 
 
 def resolve_jobs(args: argparse.Namespace) -> list[TrainingJob]:
@@ -483,6 +534,7 @@ def run_training_worker_process(
     disable_tta: bool,
     checkpoint_interval: int,
     disable_train_val: bool,
+    continue_training: bool = False,
 ) -> None:
     if world_size > 1:
         dist.init_process_group("nccl", rank=rank, world_size=world_size)
@@ -492,7 +544,7 @@ def run_training_worker_process(
     torch.set_num_interop_threads(1)
 
     plans = load_json(plans_file)
-    plans["continue_training"] = False
+    plans["continue_training"] = continue_training
     dataset_json = load_dataset_json_for_plans(plans_file)
     trainer_class = recursive_find_trainer_class_by_name(trainer_name)
     trainer = trainer_class(
@@ -507,7 +559,7 @@ def run_training_worker_process(
 
     maybe_load_checkpoint(
         trainer,
-        continue_training=False,
+        continue_training=continue_training,
         validation_only=False,
         pretrained_weights_file=None,
     )
@@ -532,6 +584,7 @@ def run_training_worker(
     checkpoint_interval: int,
     disable_train_val: bool,
     ddp: int,
+    continue_training: bool = False,
 ) -> None:
     if ddp == 1:
         run_training_worker_process(
@@ -544,6 +597,7 @@ def run_training_worker(
             disable_tta,
             checkpoint_interval,
             disable_train_val,
+            continue_training,
         )
         return
 
@@ -560,6 +614,7 @@ def run_training_worker(
             disable_tta,
             checkpoint_interval,
             disable_train_val,
+            continue_training,
         ),
         nprocs=ddp,
         join=True,
@@ -575,6 +630,7 @@ def make_worker_command(
     checkpoint_interval: int,
     disable_train_val: bool,
     ddp: int = 1,
+    continue_training: bool = False,
 ) -> list[str]:
     command = [
         sys.executable,
@@ -598,6 +654,8 @@ def make_worker_command(
         command.append("--disable-tta")
     if disable_train_val:
         command.append("--disable_train_val")
+    if continue_training:
+        command.append("--c")
     return command
 
 
@@ -610,6 +668,7 @@ def launch_job(
     checkpoint_interval: int,
     disable_train_val: bool,
     ddp: int,
+    continue_training: bool = False,
 ) -> subprocess.Popen:
     env = os.environ.copy()
     env["CUDA_VISIBLE_DEVICES"] = gpu
@@ -623,6 +682,7 @@ def launch_job(
             checkpoint_interval,
             disable_train_val,
             ddp,
+            continue_training,
         ),
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
@@ -667,12 +727,13 @@ def schedule_jobs(
     console: Console,
     ddp: int = 1,
     launcher: Callable[
-        [TrainingJob, str, str, str, bool, int, bool, int], subprocess.Popen
+        [TrainingJob, str, str, str, bool, int, bool, int, bool], subprocess.Popen
     ] = launch_job,
     monotonic: Callable[[], float] = time.monotonic,
     wall_clock: Callable[[], datetime] = datetime.now,
     sleep: Callable[[float], None] = time.sleep,
     poll_interval: float = 5.0,
+    continue_training: bool = False,
 ) -> list[FinishedJob]:
     pending = list(jobs)
     free_gpus = group_gpu_tokens(gpu_tokens, ddp)
@@ -696,6 +757,7 @@ def schedule_jobs(
                 checkpoint_interval,
                 disable_train_val,
                 ddp,
+                continue_training,
             )
             started_at = wall_clock()
             running.append(RunningJob(job, gpu, process, monotonic(), started_at))
@@ -727,6 +789,29 @@ def schedule_jobs(
     return results
 
 
+def skip_validated_jobs(
+    jobs: Sequence[TrainingJob], plans_file: str, trainer_name: str, console: Console
+) -> list[TrainingJob]:
+    plans_manager = PlansManager(plans_file)
+    pending = []
+    for job in jobs:
+        summary_file = join(
+            nnUNet_results,
+            plans_manager.dataset_name,
+            f"{trainer_name}__{plans_manager.plans_name}__{job.configuration}",
+            f"fold_{job.fold}", "validation", "summary.json",
+        )
+        if isfile(summary_file):
+            console.print(
+                f"{format_bold_value('SKIPPED', SKIPPED_COLOR)} "
+                f"job {job.index + 1}/{job.total} — {format_job_configuration(job)} — "
+                "validation/summary.json already exists."
+            )
+        else:
+            pending.append(job)
+    return pending
+
+
 def get_visible_gpus() -> list[str]:
     if not torch.cuda.is_available():
         raise RuntimeError(
@@ -755,10 +840,16 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         help="Plans identifier under nnUNet_preprocessed/<dataset>, or a direct plans JSON path. "
         "Default: MobileUNetPlans",
     )
-    parser.add_argument("-c", "--configs", nargs="+", help="Configuration names.")
+    parser.add_argument("--configs", nargs="+", help="Configuration names.")
+    parser.add_argument(
+        "--continue", "-c", "--c", dest="continue_training", action="store_true",
+        help="Skip jobs with validation/summary.json and resume remaining jobs from checkpoint_last.pth.",
+    )
     parser.add_argument("-f", "--folds", nargs="+", type=int, help="Fold indices.")
     parser.add_argument(
-        "-j", "--json", help="Path to a JSON file describing ordered training jobs."
+        "-j",
+        "--json",
+        help="Path to a JSON or JSONC file describing ordered training jobs.",
     )
     parser.add_argument(
         "-i",
@@ -850,6 +941,7 @@ def batch_train_entry(argv: Sequence[str] | None = None) -> int:
             args.ckpt_interval,
             args.disable_train_val,
             args.ddp,
+            args.continue_training,
         )
         return 0
 
@@ -861,6 +953,11 @@ def batch_train_entry(argv: Sequence[str] | None = None) -> int:
         plans_file,
         requested_configurations_from_jobs(jobs, args.exclude),
     )
+    if args.continue_training:
+        jobs = skip_validated_jobs(jobs, plans_file, args.trainer, console)
+        if not jobs:
+            console.print("All jobs already have validation summaries; nothing to train.")
+            return 0
     validate_ddp_batch_sizes(
         plans_file, requested_configurations_from_jobs(jobs), args.ddp
     )
@@ -888,6 +985,7 @@ def batch_train_entry(argv: Sequence[str] | None = None) -> int:
         args.disable_train_val,
         console,
         args.ddp,
+        continue_training=args.continue_training,
     )
     print_summary(console, results)
     return 1 if any(i.returncode != 0 for i in results) else 0
