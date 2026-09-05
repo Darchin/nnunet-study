@@ -124,42 +124,6 @@ class MobileUNetPlanner(StemmedPlanner):
                     }
                 },
             },
-            "MN-3x-T": {
-                "inherits_from": "MN-3x",
-                "patch_size_multiplier": 8,
-                "architecture": {
-                    "arch_kwargs": {
-                        "channels": [32, 64, 96, 160],
-                    }
-                },
-            },
-            "MN-3x-S": {
-                "inherits_from": "MN-3x",
-                "patch_size_multiplier": 8,
-                "architecture": {
-                    "arch_kwargs": {
-                        "channels": [64, 128, 192, 320],
-                    }
-                },
-            },
-            "MN-3x-M": {
-                "inherits_from": "MN-3x",
-                "patch_size_multiplier": 8,
-                "architecture": {
-                    "arch_kwargs": {
-                        "channels": [96, 192, 288, 480],
-                    }
-                },
-            },
-            "MN-3x-L": {
-                "inherits_from": "MN-3x",
-                "patch_size_multiplier": 8,
-                "architecture": {
-                    "arch_kwargs": {
-                        "channels": [128, 256, 384, 640],
-                    }
-                },
-            },
             "MN-4x-T": {
                 "inherits_from": "MN-4x",
                 "patch_size_multiplier": 6,
@@ -169,13 +133,11 @@ class MobileUNetPlanner(StemmedPlanner):
                     }
                 },
             },
-            "MN-4x-S-IN+ReLU": {
+            "MN-4x-S": {
                 "inherits_from": "MN-4x",
                 "patch_size_multiplier": 6,
                 "architecture": {
                     "arch_kwargs": {
-                        "norm_layer": "nnunetv2.network_architecture.nd.InstanceNormNd",
-                        "act_layer": "torch.nn.ReLU",
                         "channels": [64, 128, 192, 320],
                     }
                 },
@@ -204,185 +166,12 @@ class MobileUNetPlanner(StemmedPlanner):
         return self.configs
 
 
-class ConvNeXtPlanner(MobileUNetPlanner):
-    @property
-    def configs(self):
-        return {
-            "CN": {
-                "architecture": {
-                    "network_class_name": "nnunetv2.network_architecture.mobile_unet.MobileUNet",
-                    "arch_kwargs": {
-                        "block_factory": "nnunetv2.network_architecture.uib.ConvNeXtBlock",
-                        "norm_layer": "nnunetv2.network_architecture.nd.LayerNormNd",
-                        "norm_kwargs": {},
-                        "act_layer": "torch.nn.SiLU",
-                        "act_kwargs": {"inplace": True},
-                    },
-                    "_kw_requires_import": ("block_factory", "norm_layer", "act_layer"),
-                },
-                "required_for_training": [
-                    "architecture.arch_kwargs.ndim",
-                    "architecture.arch_kwargs.kernel_sizes",
-                    "architecture.arch_kwargs.strides",
-                    "patch_size_multiplier",
-                    "architecture.network_class_name",
-                    "architecture.arch_kwargs.channels",
-                    "architecture.arch_kwargs.encoder_depths",
-                    "architecture.arch_kwargs.decoder_depths",
-                    "architecture.arch_kwargs.encoder_expansion_ratios",
-                    "architecture.arch_kwargs.decoder_expansion_ratios",
-                ],
-                "trainer": {
-                    "initial_lr": 3e-4,
-                    "weight_decay": 1e-3,
-                    "num_epochs": 500,
-                    "warmup_epochs": 5,
-                    "min_lr": 1e-6,
-                    "enable_deep_supervision": False,
-                },
-            },
-            "CN-2x": {
-                "inherits_from": ["2x", "CN"],
-                "architecture": {
-                    "arch_kwargs": {
-                        "ndim": 3,
-                        "kernel_sizes": [[3] * 3 for _ in range(5)],
-                        "strides": [[1] * 3] + [[2] * 3 for _ in range(5 - 1)],
-                        "encoder_depths": [2, 3, 3, 9, 3],
-                        "decoder_depths": [1, 1, 1, 1],
-                        "encoder_expansion_ratios": 4,
-                        "decoder_expansion_ratios": 4,
-                    }
-                },
-            },
-            "CN-3x": {
-                "inherits_from": ["3x", "CN"],
-                "architecture": {
-                    "arch_kwargs": {
-                        "ndim": 3,
-                        "kernel_sizes": [[3] * 3 for _ in range(4)],
-                        "strides": [[1] * 3] + [[2] * 3 for _ in range(4 - 1)],
-                        "encoder_depths": [3, 3, 9, 3],
-                        "decoder_depths": [1, 1, 1],
-                        "encoder_expansion_ratios": 4,
-                        "decoder_expansion_ratios": 4,
-                    }
-                },
-            },
-            "CN-4x": {
-                "inherits_from": ["4x", "CN"],
-                "architecture": {
-                    "arch_kwargs": {
-                        "ndim": 3,
-                        "kernel_sizes": [[3] * 3 for _ in range(4)],
-                        "strides": [[1] * 3] + [[2] * 3 for _ in range(4 - 1)],
-                        "encoder_depths": [3, 3, 9, 3],
-                        "decoder_depths": [1, 1, 1],
-                        "encoder_expansion_ratios": 4.0,
-                        "decoder_expansion_ratios": 4.0,
-                    }
-                },
-            },
-            "CN-2x-T": {
-                "inherits_from": "CN-2x",
-                "patch_size_multiplier": 6,
-                "architecture": {"arch_kwargs": {"channels": [32, 64, 96, 160]}},
-            },
-            "CN-2x-S": {
-                "inherits_from": "CN-2x",
-                "patch_size_multiplier": 6,
-                "architecture": {"arch_kwargs": {"channels": [32, 64, 128, 192, 320]}},
-            },
-            "CN-2x-M": {
-                "inherits_from": "CN-2x",
-                "patch_size_multiplier": 6,
-                "architecture": {
-                    "arch_kwargs": {
-                        "channels": [48, 96, 192, 288, 480],
-                    }
-                },
-            },
-            "CN-3x-T": {
-                "inherits_from": "CN-3x",
-                "patch_size_multiplier": 8,
-                "architecture": {
-                    "arch_kwargs": {
-                        "channels": [32, 64, 96, 160],
-                    }
-                },
-            },
-            "CN-3x-S": {
-                "inherits_from": "CN-3x",
-                "patch_size_multiplier": 8,
-                "architecture": {
-                    "arch_kwargs": {
-                        "channels": [64, 128, 192, 320],
-                    }
-                },
-            },
-            "CN-3x-M": {
-                "inherits_from": "CN-3x",
-                "patch_size_multiplier": 8,
-                "architecture": {
-                    "arch_kwargs": {
-                        "channels": [96, 192, 288, 480],
-                    }
-                },
-            },
-            "CN-3x-L": {
-                "inherits_from": "CN-3x",
-                "patch_size_multiplier": 8,
-                "architecture": {
-                    "arch_kwargs": {
-                        "channels": [128, 256, 384, 640],
-                    }
-                },
-            },
-            "CN-4x-T": {
-                "inherits_from": "CN-4x",
-                "patch_size_multiplier": 6,
-                "architecture": {
-                    "arch_kwargs": {
-                        "channels": [32, 64, 96, 160],
-                    }
-                },
-            },
-            "CN-4x-S": {
-                "inherits_from": "CN-4x",
-                "patch_size_multiplier": 6,
-                "architecture": {
-                    "arch_kwargs": {
-                        "channels": [64, 128, 192, 320],
-                    }
-                },
-            },
-            "CN-4x-M": {
-                "inherits_from": "CN-4x",
-                "patch_size_multiplier": 6,
-                "architecture": {
-                    "arch_kwargs": {
-                        "channels": [96, 192, 288, 480],
-                    }
-                },
-            },
-            "CN-4x-L": {
-                "inherits_from": "CN-4x",
-                "patch_size_multiplier": 6,
-                "architecture": {
-                    "arch_kwargs": {
-                        "channels": [128, 256, 384, 640],
-                    }
-                },
-            },
-        }
-
-
-class SetOnePlanner(MobileUNetPlanner):
+class BlockDesignPlanner(MobileUNetPlanner):
     @property
     def configs(self):
         configs = super().configs
 
-        norm_configs = {
+        norm = {
             "IN": {
                 "architecture": {
                     "arch_kwargs": {
@@ -397,15 +186,7 @@ class SetOnePlanner(MobileUNetPlanner):
                     }
                 }
             },
-            "GN-G1": {
-                "architecture": {
-                    "arch_kwargs": {
-                        "norm_layer": "nnunetv2.network_architecture.nd.GroupNormNd",
-                        "norm_kwargs": {"num_groups": 1},
-                    }
-                }
-            },
-            "GN-CH16": {
+            "GN-C16": {
                 "architecture": {
                     "arch_kwargs": {
                         "norm_layer": "nnunetv2.network_architecture.nd.GroupNormNd",
@@ -414,14 +195,8 @@ class SetOnePlanner(MobileUNetPlanner):
                 }
             },
         }
-        block_configs = {
-            "CN": {
-                "architecture": {
-                    "arch_kwargs": {
-                        "block_factory": "nnunetv2.network_architecture.uib.ConvNeXtBlock"
-                    }
-                }
-            },
+
+        block = {
             "IB": {
                 "architecture": {
                     "arch_kwargs": {
@@ -445,10 +220,35 @@ class SetOnePlanner(MobileUNetPlanner):
             },
         }
 
-        new_configs = configs | norm_configs | block_configs
-        for block, norm in product(block_configs, norm_configs):
-            new_configs[f"MN-4x-S_{block}_{norm}"] = {"inherits_from": ["MN-4x-S", block, norm]}
-        
+        scale = ("S", "M", "L")
+
+        new_configs = configs | norm | block
+        for b, n, s in product(block, norm, scale):
+            new_configs[f"MN-4x-{s}_{b}_{n}"] = {
+                "inherits_from": [f"MN-4x-{s}", b, n],
+                "trainer": {"num_epochs": 500},
+            }
+
+        return new_configs
+
+
+class PatchSizeAndTrainingDurationPlanner(MobileUNetPlanner):
+    @property
+    def configs(self):
+        configs = super().configs
+
+        psm_to_duration_mapping = {4: [844, 1688, 3375], 6: [250, 500, 1000]}
+
+        new_configs = configs
+        for psm in psm_to_duration_mapping.keys():
+            for ne in psm_to_duration_mapping[psm]:
+                for s in ("S", "M"):
+                    new_configs[f"MN-4x-{s}_P{psm}_EP{ne}"] = {
+                        "inherits_from": [f"MN-4x-{s}"],
+                        "patch_size_multiplier": psm,
+                        "trainer": {"num_epochs": ne},
+                    }
+
         return new_configs
 
 
