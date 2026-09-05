@@ -93,6 +93,9 @@ nnUNetv2_train_pretrained = "nnunetv2.run.run_training_from_pretrained:train_pre
 [[tool.uv.index]]
 url = "https://download.pytorch.org/whl/cu130"
 
+[tool.uv.extra-build-dependencies]
+acvl-utils = ["packaging>=24.2"]
+
 [project.optional-dependencies]
 dev = ["pre-commit"]
 
