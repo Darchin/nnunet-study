@@ -91,10 +91,12 @@ nnUNetv2_plan_like_dynamic = "nnunetv2.experiment_planning.like_nnssl:plan_like_
 nnUNetv2_train_pretrained = "nnunetv2.run.run_training_from_pretrained:train_pretrained_entrypoint"
 
 [[tool.uv.index]]
+name = "pytorch"
 url = "https://download.pytorch.org/whl/cu130"
+explicit = true
 
-[tool.uv.extra-build-dependencies]
-acvl-utils = ["packaging>=24.2"]
+[tool.uv.sources]
+torch = { index = "pytorch" }
 
 [project.optional-dependencies]
 dev = ["pre-commit"]
