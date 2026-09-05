@@ -1,0 +1,36 @@
+[
+  {
+    "configs": [
+      "MN-4x-S_IB_IN",
+      "MN-4x-S_IB_LN",
+      "MN-4x-S_IB_GN-C16",
+      "MN-4x-S_PMLP_IN",
+      "MN-4x-S_PMLP_LN",
+      "MN-4x-S_PMLP_GN-C16",
+      "MN-4x-S_PIB_IN",
+      "MN-4x-S_PIB_LN",
+      "MN-4x-S_PIB_GN-C16"
+    ],
+    "folds": [
+      0,
+      1,
+      2,
+      3,
+      4
+    ]
+  },
+  {
+    "configs": [
+      "MN-4x-M_IB_IN",
+      "MN-4x-M_PMLP_IN",
+      "MN-4x-L_PMLP_IN"
+    ],
+    "folds": [
+      0,
+      1,
+      2,
+      3,
+      4
+    ]
+  }
+]

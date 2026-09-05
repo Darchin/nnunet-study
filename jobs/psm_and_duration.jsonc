@@ -1,0 +1,36 @@
+[
+  {
+    "configs": [
+      "MN-4x-S_P4_EP844",
+      "MN-4x-S_P4_EP1688",
+      "MN-4x-S_P4_EP3375",
+      "MN-4x-M_P4_EP844",
+      "MN-4x-M_P4_EP1688",
+      "MN-4x-M_P4_EP3375"
+    ],
+    "folds": [
+      0,
+      1,
+      2,
+      3,
+      4
+    ]
+  },
+  {
+    "configs": [
+      "MN-4x-S_P6_EP250",
+      // "MN-4x-S_P6_EP500", = block design's "MN-4x-S_IB_IN"
+      "MN-4x-S_P6_EP1000",
+      "MN-4x-M_P6_EP250",
+      // "MN-4x-M_P6_EP500", = block design's "MN-4x-M_IB_IN"
+      "MN-4x-M_P6_EP1000"
+    ],
+    "folds": [
+      0,
+      1,
+      2,
+      3,
+      4
+    ]
+  }
+]
