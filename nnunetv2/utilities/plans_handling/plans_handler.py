@@ -301,7 +301,6 @@ class PlansManager(object):
                 parent_config = self._internal_resolve_configuration_inheritance(parent_config_name, visited)
                 base_config = self._merge_inherited_configuration(base_config, parent_config)
             configuration = self._merge_inherited_configuration(base_config, configuration)
-        configuration = self._resolve_patch_size_from_multiplier(configuration_name, configuration)
         return configuration
 
     @staticmethod
@@ -371,6 +370,11 @@ class PlansManager(object):
                                f"Available configurations: {list(self.plans['configurations'].keys())}")
 
         configuration_dict = self._internal_resolve_configuration_inheritance(configuration_name)
+        # Resolve derived values only after the entire inheritance tree has been
+        # merged. Otherwise a patch size derived for a parent is inherited as if
+        # it had been set explicitly and conflicts when a child overrides the
+        # patch size multiplier.
+        configuration_dict = self._resolve_patch_size_from_multiplier(configuration_name, configuration_dict)
         return ConfigurationManager(configuration_dict)
 
     @property
