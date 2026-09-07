@@ -14,10 +14,15 @@ from nnunetv2.network_architecture.types import ShapeNd
 from nnunetv2.network_architecture.utils import compute_padding, ensure_ntuple
 
 type RouterOpSeq = Sequence[
-    Literal["gap", "conv", "sigmoid", "softmax", "softplus", "norm"]
+    Literal["gap", "conv", "sigmoid", "softmax", "sproot", "norm"]
 ]
 
-type MoEBackend = Literal["bmm", "bg", "vmap", "naive"]
+type MoEBackend = Literal["bmm", "bag", "vmap", "naive"]
+
+
+class SoftplusRoot(nn.Module):
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return torch.sqrt(F.softplus(x))
 
 
 class Sigmoid(nn.Module):
@@ -57,7 +62,7 @@ class Router(nn.Module):
         self.op_seq = list(op_seq)
 
         assert set(self.op_seq).issubset(
-            {"gap", "conv", "sigmoid", "softmax", "softplus", "norm"}
+            {"gap", "conv", "sigmoid", "softmax", "sproot", "norm"}
         )
 
         assert all(
@@ -92,8 +97,8 @@ class Router(nn.Module):
                     self.add_module("sigmoid", Sigmoid())
                 case "softmax":
                     self.add_module("softmax", Softmax())
-                case "softplus":
-                    self.add_module("softplus", nn.Softplus())
+                case "sproot":
+                    self.add_module("sproot", SoftplusRoot())
                 case "norm":
                     self.add_module("norm", Normalize())
 
@@ -122,7 +127,7 @@ class MoEConvNd(nn.Module):
         groups: int = 1,
         bias: bool = True,
         num_experts: int = 1,
-        backend: MoEBackend = "bg",
+        backend: MoEBackend = "bag",
     ):
         super().__init__()
         self.N = N
@@ -137,7 +142,7 @@ class MoEConvNd(nn.Module):
 
         assert backend in {
             "bmm",
-            "bg",
+            "bag",
             "vmap",
             "naive",
         }, f"Invalid MoE backend provided: {backend}."
@@ -207,7 +212,7 @@ class MoEConvNd(nn.Module):
             x += bias
         return x
 
-    def _forward_bg(self, x: torch.Tensor, scores: torch.Tensor):
+    def _forward_bag(self, x: torch.Tensor, scores: torch.Tensor):
         conv_op = [F.conv1d, F.conv2d, F.conv3d][self.N - 1]
 
         weight, bias = self.blend_params(scores)
@@ -274,8 +279,8 @@ class MoEConvNd(nn.Module):
         match self.backend:
             case "bmm":
                 x = self._forward_bmm(x, scores)
-            case "bg":
-                x = self._forward_bg(x, scores)
+            case "bag":
+                x = self._forward_bag(x, scores)
             case "vmap":
                 x = self._forward_vmap(x, scores)
             case "naive":
@@ -295,7 +300,7 @@ class MoEConvBlock(ConvBlock):
         groups: int = 1,
         bias: bool | None = None,
         num_experts: int = 1,
-        backend: MoEBackend = "bg",
+        backend: MoEBackend = "bag",
         normalization: ModuleFactory = nn.Identity,
         activation: ModuleFactory = nn.Identity,
         op_seq: ConvBlockOpSeq = [
