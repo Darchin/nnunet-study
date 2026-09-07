@@ -115,6 +115,26 @@ class InstanceNormNd:
         )
 
 
+class BatchNormNd:
+    def __new__(
+        cls,
+        N: int,
+        num_channels: int,
+        affine: bool = True,
+        eps: float = 1e-5,
+        *args,
+        **kwargs,
+    ) -> nn.BatchNorm1d | nn.BatchNorm2d | nn.BatchNorm3d:
+        mod = getattr(nn, f"BatchNorm{N}d")
+        return mod(
+            num_features=num_channels,
+            affine=affine,
+            eps=eps,
+            *args,
+            **kwargs,
+        )
+
+
 class GroupNormNd:
     def __new__(
         cls,
@@ -139,11 +159,7 @@ class GroupNormNd:
                 num_channels % num_groups == 0
             ), f"Number of channels ({num_channels}) must be divisible by the provided number of groups ({num_groups})."
 
-        _num_groups = (
-            num_groups
-            or
-            num_channels // num_channels_per_group
-        )
+        _num_groups = num_groups or num_channels // num_channels_per_group
 
         return nn.GroupNorm(
             num_groups=_num_groups,
