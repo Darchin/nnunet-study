@@ -6,7 +6,7 @@ import sys
 import warnings
 from copy import deepcopy
 from datetime import datetime
-from time import time, sleep
+from time import time, sleep, perf_counter
 from typing import Tuple, Union, List
 
 import numpy as np
@@ -243,7 +243,7 @@ class nnUNetTrainer(object):
             # compile network for free speedup
             if self._do_i_compile():
                 self.print_to_log_file('Using torch.compile...')
-                self.network = torch.compile(self.network)
+                self.network = torch.compile(self.network, dynamic=False, mode="reduce-overhead")
 
             self.optimizer, self.lr_scheduler = self.configure_optimizers()
             # if ddp, wrap in DDP wrapper
@@ -1159,10 +1159,13 @@ class nnUNetTrainer(object):
         self.logger.log('val_losses', loss_here, self.current_epoch)
 
     def on_epoch_start(self):
+        self._epoch_start_time = perf_counter()
         self.logger.log('epoch_start_timestamps', time(), self.current_epoch)
 
     def on_epoch_end(self):
+        epoch_duration = perf_counter() - self._epoch_start_time
         self.logger.log('epoch_end_timestamps', time(), self.current_epoch)
+        self.logger.log('epoch_durations', epoch_duration, self.current_epoch)
 
         self.print_to_log_file('train_loss', np.round(self.logger.get_value('train_losses', step=-1), decimals=4))
         if not self.disable_train_val:
@@ -1170,7 +1173,7 @@ class nnUNetTrainer(object):
             self.print_to_log_file('Pseudo dice', [np.round(i, decimals=4) for i in
                                                    self.logger.get_value('dice_per_class_or_region', step=-1)])
         self.print_to_log_file(
-            f"Epoch time: {np.round(self.logger.get_value('epoch_end_timestamps', step=-1) - self.logger.get_value('epoch_start_timestamps', step=-1), decimals=2)} s")
+            f"Epoch time: {np.round(epoch_duration, decimals=2)} s")
 
         # handling periodic checkpointing
         current_epoch = self.current_epoch

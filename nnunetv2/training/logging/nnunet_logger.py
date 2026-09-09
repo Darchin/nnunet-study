@@ -153,7 +153,8 @@ class LocalLogger:
             'val_losses': list(),
             'lrs': list(),
             'epoch_start_timestamps': list(),
-            'epoch_end_timestamps': list()
+            'epoch_end_timestamps': list(),
+            'epoch_durations': list()
         }
         self.verbose = verbose
         # shut up, this logging is great
@@ -185,7 +186,7 @@ class LocalLogger:
 
     def plot_progress_png(self, output_folder, include_validation: bool = True):
         # These values are logged for every epoch regardless of whether training validation is enabled.
-        always_logged = ('train_losses', 'lrs', 'epoch_start_timestamps', 'epoch_end_timestamps')
+        always_logged = ('train_losses', 'lrs', 'epoch_durations')
         epoch = min(len(self.my_fantastic_logging[i]) for i in always_logged) - 1
         sns.set(font_scale=2.5)
         fig, ax_all = plt.subplots(3, 1, figsize=(30, 54))
@@ -209,8 +210,7 @@ class LocalLogger:
         # epoch times to see whether the training speed is consistent (inconsistent means there are other jobs
         # clogging up the system)
         ax = ax_all[1]
-        ax.plot(x_values, [i - j for i, j in zip(self.my_fantastic_logging['epoch_end_timestamps'][:epoch + 1],
-                                                 self.my_fantastic_logging['epoch_start_timestamps'])][:epoch + 1], color='b',
+        ax.plot(x_values, self.my_fantastic_logging['epoch_durations'][:epoch + 1], color='b',
                 ls='-', label="epoch duration", linewidth=4)
         ylim = [0] + [ax.get_ylim()[1]]
         ax.set(ylim=ylim)
@@ -234,7 +234,14 @@ class LocalLogger:
         return self.my_fantastic_logging
 
     def load_checkpoint(self, checkpoint: dict):
-        self.my_fantastic_logging = checkpoint
+        self.my_fantastic_logging = dict(checkpoint)
+        if 'epoch_durations' not in self.my_fantastic_logging:
+            # Older checkpoints only have wall-clock measurements. Preserve those historical
+            # estimates; resumed epochs will record durations using a monotonic clock.
+            self.my_fantastic_logging['epoch_durations'] = [
+                end - start if start is not None and end is not None else None
+                for start, end in zip(checkpoint['epoch_start_timestamps'], checkpoint['epoch_end_timestamps'])
+            ]
 
 
 class WandbLogger:

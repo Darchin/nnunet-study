@@ -302,7 +302,7 @@ def benchmark(
             enable_deep_supervision,
         ).to(device)
         network.train()
-        network = torch.compile(network, dynamic=False, disable=not compile_model)
+        network = torch.compile(network, dynamic=False, mode="reduce-overhead", disable=not compile_model)
         loss_fn = build_dice_ce_loss(
             configuration_manager, plans_manager, dataset_json, enable_deep_supervision
         ).to(device)
