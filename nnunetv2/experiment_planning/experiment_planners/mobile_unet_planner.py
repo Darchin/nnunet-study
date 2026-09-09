@@ -86,8 +86,8 @@ class MobileUNetPlanner(StemmedPlanner):
                         "strides": [[1] * 3] + [[2] * 3 for _ in range(4 - 1)],
                         "encoder_depths": [3, 3, 9, 3],
                         "decoder_depths": [1, 1, 1],
-                        "encoder_expansion_ratios": [1.0, 2.0, 3.0, 4.0],
-                        "decoder_expansion_ratios": [1.0, 2.0, 3.0],
+                        "encoder_expansion_ratios": [2.0, 3.0, 4.0, 4.0],
+                        "decoder_expansion_ratios": [2.0, 3.0, 4.0],
                     }
                 },
             },
@@ -105,11 +105,6 @@ class MobileUNetPlanner(StemmedPlanner):
                     }
                 },
             },
-            "MN-2x-T": {
-                "inherits_from": "MN-2x",
-                "patch_size_multiplier": 6,
-                "architecture": {"arch_kwargs": {"channels": [32, 64, 96, 160]}},
-            },
             "MN-2x-S": {
                 "inherits_from": "MN-2x",
                 "patch_size_multiplier": 6,
@@ -124,18 +119,27 @@ class MobileUNetPlanner(StemmedPlanner):
                     }
                 },
             },
-            "MN-4x-T": {
-                "inherits_from": "MN-4x",
-                "patch_size_multiplier": 6,
+            "MN-3x-S": {
+                "inherits_from": "MN-3x",
+                "patch_size_multiplier": 8,
                 "architecture": {
                     "arch_kwargs": {
-                        "channels": [32, 64, 96, 160],
+                        "channels": [64, 128, 192, 320],
+                    }
+                },
+            },
+            "MN-3x-M": {
+                "inherits_from": "MN-3x",
+                "patch_size_multiplier": 8,
+                "architecture": {
+                    "arch_kwargs": {
+                        "channels": [96, 192, 288, 480],
                     }
                 },
             },
             "MN-4x-S": {
                 "inherits_from": "MN-4x",
-                "patch_size_multiplier": 6,
+                "patch_size_multiplier": 4,
                 "architecture": {
                     "arch_kwargs": {
                         "channels": [64, 128, 192, 320],
@@ -144,7 +148,7 @@ class MobileUNetPlanner(StemmedPlanner):
             },
             "MN-4x-M": {
                 "inherits_from": "MN-4x",
-                "patch_size_multiplier": 6,
+                "patch_size_multiplier": 4,
                 "architecture": {
                     "arch_kwargs": {
                         "channels": [96, 192, 288, 480],
@@ -226,7 +230,8 @@ class BlockDesignPlanner(MobileUNetPlanner):
         for b, n, s in product(block, norm, scale):
             new_configs[f"MN-4x-{s}_{b}_{n}"] = {
                 "inherits_from": [f"MN-4x-{s}", b, n],
-                "trainer": {"num_epochs": 500},
+                "patch_size_multiplier": 4,
+                "trainer": {"num_epochs": 1000},
             }
 
         return new_configs
@@ -237,7 +242,10 @@ class PatchSizeAndTrainingDurationPlanner(MobileUNetPlanner):
     def configs(self):
         configs = super().configs
 
-        psm_to_duration_mapping = {4: [844, 1688, 3375], 6: [250, 500, 1000]}
+        psm_to_duration_mapping = {
+            4: [844, 1688, 3375],
+            6: [250, 500, 1000],
+        }
 
         new_configs = configs
         for psm in psm_to_duration_mapping.keys():
@@ -252,102 +260,211 @@ class PatchSizeAndTrainingDurationPlanner(MobileUNetPlanner):
         return new_configs
 
 
-class MobileUNetMoEPlanner(MobileUNetPlanner):
+class SEPlanner(MobileUNetPlanner):
     @property
-    def moe_configs(self):
-        # PARAMS = {
-        #     "num_experts": [2, 4, 8, 16],
-        #     "pw_backend": [None, "bmm"],
-        #     "dw_backend": [None, "bg"],
-        #     "router_kernel_size": [1, 3],
-        #     "router_stride": [1, 2],
-        #     "router_seq_op": [
-        #         ["gap", "conv", "sigmoid", "norm"],
-        #         ["conv", "sigmoid", "gap", "norm"],
-        #     ],
-        # }
+    def configs(self):
+        configs = super().configs
 
-        # alias = "MN-4x-S"
-        # for k, v in PARAMS.items():
-        #     alias += "-E{num_experts}"
+        placements = {"enc": "encoder", "dec": "decoder"}
 
-        configs = {
-            {
-                "MN-4x-S_MoE-S1toS4-E4-PW+BMM-GAPConvSigNorm": {
-                    "inherits_from": "MN-4x-S",
-                    "architecture": {
-                        "arch_kwargs": {
-                            "moe_configs": [
-                                {
-                                    "num_experts": 4,
-                                    "pw_backend": "bmm",
-                                    "router_kernel_size": 1,
-                                    "router_stride": 1,
-                                    "router_op_seq": ["gap", "conv", "sigmoid", "norm"],
-                                }
-                            ]
-                            * 4
+        new_configs = configs
+        for alias, placement in placements.items():
+            new_configs[f"MN-4x-M_SE-{alias}"] = {
+                "inherits_from": [f"MN-4x-M"],
+                "architecture": {
+                    "arch_kwargs": {
+                        f"{placement}_se_configs": {
+                            "reduction": 4.0,
+                            "placement": "mid",
                         }
-                    },
+                    }
                 },
-                "MN-4x-S_MoE-S2toS4-E4-PW+BMM-GAPConvSigNorm": {
-                    "inherits_from": "MN-4x-S",
-                    "architecture": {
-                        "arch_kwargs": {
-                            "moe_configs": [{}]
-                            + [
-                                {
-                                    "num_experts": 4,
-                                    "pw_backend": "bmm",
-                                    "router_kernel_size": 1,
-                                    "router_stride": 1,
-                                    "router_op_seq": ["gap", "conv", "sigmoid", "norm"],
-                                }
-                            ]
-                            * 3
+                "patch_size_multiplier": 4,
+                "trainer": {"num_epochs": 1000},
+            }
+
+        return new_configs
+
+
+class DyConvRouterActPlanner(MobileUNetPlanner):
+    @property
+    def configs(self):
+        configs = super().configs
+
+        router_op_seqs = {
+            "Softmax": ["conv", "softmax", "gap"],
+            "SigNormGAP": ["conv", "sigmoid", "norm", "gap"],
+            "SigGAPNorm": ["conv", "sigmoid", "gap", "norm"],
+            "SpRootNormGAP": ["conv", "sproot", "norm", "gap"],
+            "SpRootGAPNorm": ["conv", "sproot", "gap", "norm"],
+        }
+
+        new_configs = configs
+        for alias, ros in router_op_seqs.items():
+            new_configs[f"MN-4x-M_DyC-{alias}"] = {
+                "inherits_from": [f"MN-4x-M"],
+                "architecture": {
+                    "arch_kwargs": {
+                        f"encoder_moe_configs": {
+                            "num_experts": 4,
+                            "pw_backend": "bmm",
+                            "router_kernel_size": 1,
+                            "router_stride": 1,
+                            "router_op_seq": ros,
                         }
-                    },
+                    }
                 },
-                "MN-4x-S_MoE-S2toS4-E4-PW+BMM-DW+BG-GAPConvSigNorm": {
-                    "inherits_from": "MN-4x-S",
-                    "architecture": {
-                        "arch_kwargs": {
-                            "moe_configs": [{}]
-                            + [
-                                {
-                                    "num_experts": 4,
-                                    "pw_backend": "bmm",
-                                    "dw_backend": "bg",
-                                    "router_kernel_size": 1,
-                                    "router_stride": 1,
-                                    "router_op_seq": ["gap", "conv", "sigmoid", "norm"],
-                                }
-                            ]
-                            * 3
-                        }
-                    },
-                },
-                "MN-4x-S_MoE-S2toS4-E4-PW+BMM-K1S1-ConvSigGAPNorm": {
-                    "inherits_from": "MN-4x-S",
-                    "architecture": {
-                        "arch_kwargs": {
-                            "moe_configs": [{}]
-                            + [
-                                {
-                                    "num_experts": 4,
-                                    "pw_backend": "bmm",
-                                    "router_kernel_size": 1,
-                                    "router_stride": 1,
-                                    "router_op_seq": ["conv", "sigmoid", "gap", "norm"],
-                                }
-                            ]
-                            * 3
-                        }
-                    },
+                "patch_size_multiplier": 4,
+                "trainer": {
+                    "num_epochs": 1000,
+                    "router_schedule": (
+                        {"start_val": 30.0, "end_val": 1.0, "end_epoch": 25}
+                        if alias == "Softmax"
+                        else None
+                    ),
                 },
             }
-        }
-        return configs
 
-    def _additional_configurations(self):
-        return self.configs | self.moe_configs
+        return new_configs
+
+
+class DyConvLayerPlanner(MobileUNetPlanner):
+    @property
+    def configs(self):
+        configs = super().configs
+
+        cases = {
+            "PW": {"pw_backend": "bmm"},
+            "PW+DW": {"pw_backend": "bmm", "dw_backend": "bag"},
+        }
+
+        new_configs = configs
+        for alias, c in cases.items():
+            new_configs[f"MN-4x-M_DyC-SigGAPNorm-{alias}"] = {
+                "inherits_from": [f"MN-4x-M"],
+                "architecture": {
+                    "arch_kwargs": {
+                        f"encoder_moe_configs": {
+                            "num_experts": 4,
+                            **c,
+                            "router_kernel_size": 1,
+                            "router_stride": 1,
+                            "router_op_seq": ["conv", "sigmoid", "gap", "norm"],
+                        }
+                    }
+                },
+                "patch_size_multiplier": 4,
+                "trainer": {
+                    "num_epochs": 1000,
+                },
+            }
+
+        return new_configs
+
+
+class DyConvStagePlanner(MobileUNetPlanner):
+    @property
+    def configs(self):
+        configs = super().configs
+
+        cases = {
+            "Enc1+": [False] + [True] * 3,
+            "Enc2+": [True] * 4,
+            "Dec1+": [False] + [True] * 2,
+            "Dec2+": [True] * 3,
+        }
+
+        moe_config = {
+            "num_experts": 4,
+            "pw_backend": "bmm",
+            "router_kernel_size": 1,
+            "router_stride": 1,
+            "router_op_seq": ["conv", "sigmoid", "gap", "norm"],
+        }
+
+        new_configs = configs
+        for alias, c in cases.items():
+            xcoder = "encoder" if alias.startswith("Enc") else "decoder"
+            new_configs[f"MN-4x-M_DyC-SigGAPNorm-PW-{alias}"] = {
+                "inherits_from": [f"MN-4x-M"],
+                "architecture": {
+                    "arch_kwargs": {
+                        f"{xcoder}_moe_configs": [
+                            {} if c[i] == False else moe_config for i in range(4)
+                        ]
+                    }
+                },
+                "patch_size_multiplier": 4,
+                "trainer": {
+                    "num_epochs": 1000,
+                },
+            }
+
+        return new_configs
+
+
+class DyConvRouterConvPlanner(MobileUNetPlanner):
+    @property
+    def configs(self):
+        configs = super().configs
+
+        kernels = [1, 3]
+        strides = [1, 2]
+
+        new_configs = configs
+        for k, s in product(kernels, strides):
+            new_configs[f"MN-4x-M_DyC-SigGAPNorm-PW-Enc2+-K{k}-S{s}"] = {
+                "inherits_from": [f"MN-4x-M"],
+                "architecture": {
+                    "arch_kwargs": {
+                        f"encoder_moe_configs": {
+                            "num_experts": 4,
+                            "pw_backend": "bmm",
+                            "router_kernel_size": k,
+                            "router_stride": s,
+                            "router_op_seq": ["conv", "sigmoid", "gap", "norm"],
+                        }
+                    }
+                },
+                "patch_size_multiplier": 4,
+                "trainer": {
+                    "num_epochs": 1000,
+                },
+            }
+
+        return new_configs
+
+
+class DyConvNumExpertsPlanner(MobileUNetPlanner):
+    @property
+    def configs(self):
+        configs = super().configs
+
+        num_experts = [2, 4, 8, 16]
+
+        new_configs = configs
+        for ne in num_experts:
+            new_configs[f"MN-4x-M_DyC-SigGAPNorm-PW-Enc2+-K3-S2-E{ne}"] = {
+                "inherits_from": [f"MN-4x-M"],
+                "architecture": {
+                    "arch_kwargs": {
+                        f"encoder_moe_configs": [{}]
+                        + [
+                            {
+                                "num_experts": ne,
+                                "pw_backend": "bmm",
+                                "router_kernel_size": 3,
+                                "router_stride": 2,
+                                "router_op_seq": ["conv", "sigmoid", "gap", "norm"],
+                            }
+                            for _ in range(3)
+                        ]
+                    }
+                },
+                "patch_size_multiplier": 4,
+                "trainer": {
+                    "num_epochs": 1000,
+                },
+            }
+
+        return new_configs
