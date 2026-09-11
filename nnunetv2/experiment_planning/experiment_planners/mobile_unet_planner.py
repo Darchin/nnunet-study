@@ -230,8 +230,8 @@ class BlockDesignPlanner(MobileUNetPlanner):
         for b, n, s in product(block, norm, scale):
             new_configs[f"MN-4x-{s}_{b}_{n}"] = {
                 "inherits_from": [f"MN-4x-{s}", b, n],
-                "patch_size_multiplier": 4,
-                "trainer": {"num_epochs": 1000},
+                "patch_size_multiplier": 6,
+                "trainer": {"num_epochs": 500},
             }
 
         return new_configs
@@ -279,8 +279,8 @@ class SEPlanner(MobileUNetPlanner):
                         }
                     }
                 },
-                "patch_size_multiplier": 4,
-                "trainer": {"num_epochs": 1000},
+                "patch_size_multiplier": 6,
+                "trainer": {"num_epochs": 500},
             }
 
         return new_configs
@@ -314,9 +314,9 @@ class DyConvRouterActPlanner(MobileUNetPlanner):
                         }
                     }
                 },
-                "patch_size_multiplier": 4,
+                "patch_size_multiplier": 6,
                 "trainer": {
-                    "num_epochs": 1000,
+                    "num_epochs": 500,
                     "router_schedule": (
                         {"start_val": 30.0, "end_val": 1.0, "end_epoch": 25}
                         if alias == "Softmax"

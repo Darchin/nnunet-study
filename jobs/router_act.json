@@ -1,0 +1,17 @@
+[
+  {
+    "configs": [
+      "MN-4x-M_DyC-Softmax",
+      "MN-4x-M_DyC-SigNormGAP",
+      "MN-4x-M_DyC-SigGAPNorm",
+      "MN-4x-M_DyC-SpRootNormGAP",
+      "MN-4x-M_DyC-SpRootGAPNorm"
+    ],
+    "folds": [
+      0,
+      1,
+      2,
+      3
+    ]
+  }
+]

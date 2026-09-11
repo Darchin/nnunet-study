@@ -1,0 +1,14 @@
+[
+  {
+    "configs": [
+      "MN-4x-M_SE-enc",
+      "MN-4x-M_SE-dec"
+    ],
+    "folds": [
+      0,
+      1,
+      2,
+      3
+    ]
+  }
+]
