@@ -1,0 +1,14 @@
+[
+  {
+    "configs": [
+      "MN-4x-M_DyC-SigGAPNorm-PW",
+      "MN-4x-M_DyC-SigGAPNorm-PW+DW"
+    ],
+    "folds": [
+      0,
+      1,
+      2,
+      3
+    ]
+  }
+]
