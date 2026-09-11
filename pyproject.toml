@@ -51,6 +51,7 @@ dependencies = [
     "yacs",
     "batchgeneratorsv2>=0.3.2",
     "einops",
+    "rich",
     "blosc2>=3.3.2",
     "timm>=1.0",                                 # required by nnssl finetuning (Primus); dynamic-network-architectures declares timm unpinned, which can resolve to a version predating timm.layers
 ]
@@ -86,6 +87,7 @@ nnUNetv2_convert_MSD_dataset = "nnunetv2.dataset_conversion.convert_MSD_dataset:
 nnUNetv2_preprocess_like_nnssl = "nnunetv2.experiment_planning.like_nnssl:preprocess_like_nnssl_entrypoint"
 nnUNetv2_plan_like_dynamic = "nnunetv2.experiment_planning.like_nnssl:plan_like_dynamic_entrypoint"
 nnUNetv2_train_pretrained = "nnunetv2.run.run_training_from_pretrained:train_pretrained_entrypoint"
+nnUNetv2_report_results = "nnunetv2.run.report_results:report_results_entry"
 
 [[tool.uv.index]]
 name = "pytorch-cu130"
