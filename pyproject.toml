@@ -31,7 +31,6 @@ keywords = [
     'nnunet',
 ]
 dependencies = [
-    "torch>=2.12,<2.14",
     "acvl-utils>=0.2.6,<0.3",                    # 0.3 may bring breaking changes. Careful!
     "dynamic-network-architectures>=0.4.4,<0.5",
     "tqdm",
@@ -54,7 +53,6 @@ dependencies = [
     "einops",
     "blosc2>=3.3.2",
     "timm>=1.0",                                 # required by nnssl finetuning (Primus); dynamic-network-architectures declares timm unpinned, which can resolve to a version predating timm.layers
-    "triton>=3.7",
 ]
 
 [project.urls]
@@ -91,15 +89,28 @@ nnUNetv2_plan_like_dynamic = "nnunetv2.experiment_planning.like_nnssl:plan_like_
 nnUNetv2_train_pretrained = "nnunetv2.run.run_training_from_pretrained:train_pretrained_entrypoint"
 
 [[tool.uv.index]]
-name = "pytorch"
+name = "pytorch-cu130"
 url = "https://download.pytorch.org/whl/cu130"
 explicit = true
 
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
 [tool.uv.sources]
-torch = { index = "pytorch" }
+torch = [
+    { index = "pytorch-cu130", extra = "cu130" },
+    { index = "pytorch-cpu", extra = "cpu" },
+]
 
 [project.optional-dependencies]
 dev = ["pre-commit"]
+cu130 = ["torch>=2.12,<2.14", "triton>=3.7"]
+cpu = ["torch>=2.12,<2.14"]
+
+[tool.uv]
+conflicts = [[{ extra = "cpu" }, { extra = "cu130" }]]
 
 [tool.setuptools.packages.find]
 include = ["nnunetv2*"]
@@ -109,10 +120,7 @@ requires = ["setuptools>=67.8.0"]
 build-backend = "setuptools.build_meta"
 
 [dependency-groups]
-dev = [
-    "jupyter>=1.1.1",
-    "torchinfo>=1.8.0",
-]
+dev = ["jupyter>=1.1.1", "torchinfo>=1.8.0"]
 
 [tool.ruff]
 line-length = 120
