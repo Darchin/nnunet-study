@@ -190,7 +190,10 @@ class nnUNetTrainerAdamW(nnUNetTrainer):
             if isinstance(module, Router):
                 for child in module.children():
                     if hasattr(child, 'temperature'):
-                        child.temperature = temperature
+                        # Keep the buffer object stable. Reassigning a Python
+                        # scalar is observed by torch.compile as a changed
+                        # guard and causes a costly recompile each epoch.
+                        child.temperature.fill_(temperature)
 
     def on_train_epoch_start(self):
         super().on_train_epoch_start()

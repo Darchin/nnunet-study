@@ -28,7 +28,12 @@ class SoftplusRoot(nn.Module):
 class Sigmoid(nn.Module):
     def __init__(self, temperature: float = 1.0):
         super().__init__()
-        self.temperature = temperature
+        # A buffer keeps temperature as runtime tensor state. In particular, do
+        # not store this as a Python float: changing a float attribute is a
+        # torch.compile guard failure and recompiles every router graph.
+        self.register_buffer(
+            "temperature", torch.tensor(float(temperature)), persistent=False
+        )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return F.sigmoid(x / self.temperature)
@@ -37,7 +42,10 @@ class Sigmoid(nn.Module):
 class Softmax(nn.Module):
     def __init__(self, temperature: float = 1.0):
         super().__init__()
-        self.temperature = temperature
+        # See Sigmoid above. This is updated in-place by the router scheduler.
+        self.register_buffer(
+            "temperature", torch.tensor(float(temperature)), persistent=False
+        )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return F.softmax(x / self.temperature, dim=1)
