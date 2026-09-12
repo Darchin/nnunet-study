@@ -279,8 +279,8 @@ class SEPlanner(MobileUNetPlanner):
                         }
                     }
                 },
-                "patch_size_multiplier": 6,
-                "trainer": {"num_epochs": 500},
+                "patch_size_multiplier": 4,
+                "trainer": {"num_epochs": 1600},
             }
 
         return new_configs
@@ -314,9 +314,9 @@ class DyConvRouterActPlanner(MobileUNetPlanner):
                         }
                     }
                 },
-                "patch_size_multiplier": 6,
+                "patch_size_multiplier": 4,
                 "trainer": {
-                    "num_epochs": 500,
+                    "num_epochs": 1600,
                     "router_schedule": (
                         {"start_val": 30.0, "end_val": 1.0, "end_epoch": 25}
                         if alias == "Softmax"
@@ -355,7 +355,7 @@ class DyConvLayerPlanner(MobileUNetPlanner):
                 },
                 "patch_size_multiplier": 4,
                 "trainer": {
-                    "num_epochs": 1000,
+                    "num_epochs": 1600,
                 },
             }
 
@@ -396,7 +396,7 @@ class DyConvStagePlanner(MobileUNetPlanner):
                 },
                 "patch_size_multiplier": 4,
                 "trainer": {
-                    "num_epochs": 1000,
+                    "num_epochs": 1600,
                 },
             }
 
@@ -428,7 +428,7 @@ class DyConvRouterConvPlanner(MobileUNetPlanner):
                 },
                 "patch_size_multiplier": 4,
                 "trainer": {
-                    "num_epochs": 1000,
+                    "num_epochs": 1600,
                 },
             }
 
@@ -463,7 +463,7 @@ class DyConvNumExpertsPlanner(MobileUNetPlanner):
                 },
                 "patch_size_multiplier": 4,
                 "trainer": {
-                    "num_epochs": 1000,
+                    "num_epochs": 1600,
                 },
             }
 
