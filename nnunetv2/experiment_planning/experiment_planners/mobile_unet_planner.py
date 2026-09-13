@@ -349,7 +349,7 @@ class DyConvLayerPlanner(MobileUNetPlanner):
                             **c,
                             "router_kernel_size": 1,
                             "router_stride": 1,
-                            "router_op_seq": ["conv", "sigmoid", "gap", "norm"],
+                            "router_op_seq": ["conv", "sigmoid", "norm", "gap"],
                         }
                     }
                 },
@@ -379,7 +379,7 @@ class DyConvStagePlanner(MobileUNetPlanner):
             "pw_backend": "bmm",
             "router_kernel_size": 1,
             "router_stride": 1,
-            "router_op_seq": ["conv", "sigmoid", "gap", "norm"],
+            "router_op_seq": ["conv", "sigmoid", "norm", "gap"],
         }
 
         new_configs = configs
@@ -422,7 +422,7 @@ class DyConvRouterConvPlanner(MobileUNetPlanner):
                             "pw_backend": "bmm",
                             "router_kernel_size": k,
                             "router_stride": s,
-                            "router_op_seq": ["conv", "sigmoid", "gap", "norm"],
+                            "router_op_seq": ["conv", "sigmoid", "norm", "gap"],
                         }
                     }
                 },
@@ -455,7 +455,7 @@ class DyConvNumExpertsPlanner(MobileUNetPlanner):
                                 "pw_backend": "bmm",
                                 "router_kernel_size": 3,
                                 "router_stride": 2,
-                                "router_op_seq": ["conv", "sigmoid", "gap", "norm"],
+                                "router_op_seq": ["conv", "sigmoid", "norm", "gap"],
                             }
                             for _ in range(3)
                         ]
