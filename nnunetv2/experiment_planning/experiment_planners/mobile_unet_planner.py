@@ -368,10 +368,10 @@ class DyConvStagePlanner(MobileUNetPlanner):
         configs = super().configs
 
         cases = {
-            "Enc1+": [False] + [True] * 3,
-            "Enc2+": [True] * 4,
-            "Dec1+": [False] + [True] * 2,
-            "Dec2+": [True] * 3,
+            "Enc1+": [True] * 4,
+            "Enc2+": [False] + [True] * 3,
+            "Dec1+": [True] * 3,
+            "Dec2+": [False] + [True] * 2,
         }
 
         moe_config = {
