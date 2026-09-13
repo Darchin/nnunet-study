@@ -1,0 +1,14 @@
+[
+  {
+    "configs": [
+      "MN-4x-S_MoE-ROUTERACTIVATION-K3-S2-PW-STAGES-E4"
+      // "MN-4x-S_MoE-ROUTERACTIVATION-K3-S2-PW+DW-STAGES-E4"
+    ],
+    "folds": [
+      0,
+      1,
+      2,
+      3
+    ]
+  }
+]

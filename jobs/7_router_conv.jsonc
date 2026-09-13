@@ -1,0 +1,16 @@
+[
+  {
+    "configs": [
+      "MN-4x-S_MoE-ROUTERACTIVATION-K1-S1-LAYERS-STAGES-E4",
+      "MN-4x-S_MoE-ROUTERACTIVATION-K1-S2-LAYERS-STAGES-E4",
+      "MN-4x-S_MoE-ROUTERACTIVATION-K3-S1-LAYERS-STAGES-E4"
+      // "MN-4x-S_MoE-ROUTERACTIVATION-K3-S2-LAYERS-STAGES-E4"
+    ],
+    "folds": [
+      0,
+      1,
+      2,
+      3
+    ]
+  }
+]

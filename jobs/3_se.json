@@ -1,8 +1,8 @@
 [
   {
     "configs": [
-      "MN-4x-M_SE-enc",
-      "MN-4x-M_SE-dec"
+      "MN-4x-S_SE-enc",
+      "MN-4x-S_SE-dec"
     ],
     "folds": [
       0,

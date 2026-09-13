@@ -1,0 +1,16 @@
+[
+  {
+    "configs": [
+      "MN-4x-S_MoE-ROUTERACTIVATION-KERNEL-STRIDE-LAYERS-STAGES-E2",
+      // "MN-4x-S_MoE-ROUTERACTIVATION-KERNEL-STRIDE-LAYERS-STAGES-E4",
+      "MN-4x-S_MoE-ROUTERACTIVATION-KERNEL-STRIDE-LAYERS-STAGES-E8",
+      "MN-4x-S_MoE-ROUTERACTIVATION-KERNEL-STRIDE-LAYERS-STAGES-E16"
+    ],
+    "folds": [
+      0,
+      1,
+      2,
+      3
+    ]
+  }
+]
