@@ -340,7 +340,7 @@ class DyConvLayerPlanner(MobileUNetPlanner):
 
         new_configs = configs
         for alias, c in cases.items():
-            new_configs[f"MN-4x-M_DyC-SigGAPNorm-{alias}"] = {
+            new_configs[f"MN-4x-M_DyC-SigNormGAP-{alias}"] = {
                 "inherits_from": [f"MN-4x-M"],
                 "architecture": {
                     "arch_kwargs": {
@@ -377,6 +377,7 @@ class DyConvStagePlanner(MobileUNetPlanner):
         moe_config = {
             "num_experts": 4,
             "pw_backend": "bmm",
+            "dw_backend": "bag",
             "router_kernel_size": 1,
             "router_stride": 1,
             "router_op_seq": ["conv", "sigmoid", "norm", "gap"],
@@ -385,7 +386,7 @@ class DyConvStagePlanner(MobileUNetPlanner):
         new_configs = configs
         for alias, c in cases.items():
             xcoder = "encoder" if alias.startswith("Enc") else "decoder"
-            new_configs[f"MN-4x-M_DyC-SigGAPNorm-PW-{alias}"] = {
+            new_configs[f"MN-4x-M_DyC-SigNormGAP-PW+DW-{alias}"] = {
                 "inherits_from": [f"MN-4x-M"],
                 "architecture": {
                     "arch_kwargs": {
@@ -413,13 +414,14 @@ class DyConvRouterConvPlanner(MobileUNetPlanner):
 
         new_configs = configs
         for k, s in product(kernels, strides):
-            new_configs[f"MN-4x-M_DyC-SigGAPNorm-PW-Enc2+-K{k}-S{s}"] = {
+            new_configs[f"MN-4x-M_DyC-SigNormGAP-PW+DW-Enc2+-K{k}-S{s}"] = {
                 "inherits_from": [f"MN-4x-M"],
                 "architecture": {
                     "arch_kwargs": {
                         f"encoder_moe_configs": {
                             "num_experts": 4,
                             "pw_backend": "bmm",
+                            "dw_backend": "bag",
                             "router_kernel_size": k,
                             "router_stride": s,
                             "router_op_seq": ["conv", "sigmoid", "norm", "gap"],
@@ -444,7 +446,7 @@ class DyConvNumExpertsPlanner(MobileUNetPlanner):
 
         new_configs = configs
         for ne in num_experts:
-            new_configs[f"MN-4x-M_DyC-SigGAPNorm-PW-Enc2+-K3-S2-E{ne}"] = {
+            new_configs[f"MN-4x-M_DyC-SigNormGAP-PW+DW-Enc2+-K3-S2-E{ne}"] = {
                 "inherits_from": [f"MN-4x-M"],
                 "architecture": {
                     "arch_kwargs": {
