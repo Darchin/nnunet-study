@@ -390,7 +390,7 @@ class DyConvStagePlanner(MobileUNetPlanner):
                 "architecture": {
                     "arch_kwargs": {
                         f"{xcoder}_moe_configs": [
-                            {} if c[i] == False else moe_config for i in range(4)
+                            {} if c[i] == False else moe_config for i in range(len(c))
                         ]
                     }
                 },
