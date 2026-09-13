@@ -139,7 +139,7 @@ class MobileUNetPlanner(StemmedPlanner):
             },
             "MN-4x-S": {
                 "inherits_from": "MN-4x",
-                "patch_size_multiplier": 4,
+                "patch_size_multiplier": 6,
                 "architecture": {
                     "arch_kwargs": {
                         "channels": [64, 128, 192, 320],
