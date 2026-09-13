@@ -1,10 +1,10 @@
 [
   {
     "configs": [
-      // "MN-4x-M_DyC-SigGAPNorm-PW-Enc2+-K1-S1", Redundant
-      "MN-4x-M_DyC-SigGAPNorm-PW-Enc2+-K1-S2",
-      "MN-4x-M_DyC-SigGAPNorm-PW-Enc2+-K3-S1",
-      "MN-4x-M_DyC-SigGAPNorm-PW-Enc2+-K3-S2"
+      // "MN-4x-M_DyC-SigNormGAP-PW+DW-Enc2+-K1-S1", Redundant
+      "MN-4x-M_DyC-SigNormGAP-PW+DW-Enc2+-K1-S2",
+      "MN-4x-M_DyC-SigNormGAP-PW+DW-Enc2+-K3-S1",
+      "MN-4x-M_DyC-SigNormGAP-PW+DW-Enc2+-K3-S2"
     ],
     "folds": [
       0,
