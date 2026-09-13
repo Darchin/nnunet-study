@@ -1,7 +1,7 @@
 [
   {
     "configs": [
-      "MN-4x-M_DyC-SigGAPNorm-PW",
+      // "MN-4x-M_DyC-SigGAPNorm-PW", Redundant - Done by previous ablation
       "MN-4x-M_DyC-SigGAPNorm-PW+DW"
     ],
     "folds": [

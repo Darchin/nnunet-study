@@ -2,7 +2,7 @@
   {
     "configs": [
       "MN-4x-M_DyC-SigGAPNorm-PW-Enc2+-K3-S2-E2",
-      "MN-4x-M_DyC-SigGAPNorm-PW-Enc2+-K3-S2-E4",
+      // "MN-4x-M_DyC-SigGAPNorm-PW-Enc2+-K3-S2-E4", Redundant
       "MN-4x-M_DyC-SigGAPNorm-PW-Enc2+-K3-S2-E8",
       "MN-4x-M_DyC-SigGAPNorm-PW-Enc2+-K3-S2-E16"
     ],
