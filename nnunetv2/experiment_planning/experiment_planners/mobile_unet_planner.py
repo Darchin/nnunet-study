@@ -265,7 +265,7 @@ class SEPlanner(MobileUNetPlanner):
     def configs(self):
         configs = super().configs
 
-        placements = {"enc": "encoder", "dec": "decoder"}
+        placements = {"Enc1+": "encoder", "Dec1+": "decoder"}
 
         new_configs = configs
         for alias, placement in placements.items():

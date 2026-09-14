@@ -1,10 +1,10 @@
 [
   {
     "configs": [
-      "MN-4x-S_MoE-ROUTERACTIVATION-K3-S2-PW+DW-Enc1+-E4",
-      "MN-4x-S_MoE-ROUTERACTIVATION-K3-S2-PW+DW-Enc2+-E4",
-      "MN-4x-S_MoE-ROUTERACTIVATION-K3-S2-PW+DW-Dec1+-E4",
-      "MN-4x-S_MoE-ROUTERACTIVATION-K3-S2-PW+DW-Dec2+-E4"
+      "MN-4x-S_MoE-SigGAPNorm-K3-S2-PW+DW-Enc1+-E4",
+      "MN-4x-S_MoE-SigGAPNorm-K3-S2-PW+DW-Enc2+-E4",
+      "MN-4x-S_MoE-SigGAPNorm-K3-S2-PW+DW-Dec1+-E4",
+      "MN-4x-S_MoE-SigGAPNorm-K3-S2-PW+DW-Dec2+-E4"
     ],
     "folds": [
       0,
