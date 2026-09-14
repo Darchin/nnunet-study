@@ -325,7 +325,10 @@ class MoERouterActPlanner(MobileUNetPlanner):
         return new_configs
 
 
-SELECTED_ROUTER_ACT = {"alias": "", "router_op_seq": ""}
+SELECTED_ROUTER_ACT = {
+    "alias": "SigGAPNorm",
+    "router_op_seq": ["conv", "sigmoid", "gap", "norm"],
+}
 
 
 class MoEStagePlanner(MobileUNetPlanner):
@@ -368,7 +371,7 @@ class MoEStagePlanner(MobileUNetPlanner):
         return new_configs
 
 
-SELECTED_STAGES = {"alias": "", "xcoder": "", "stages": []}
+SELECTED_STAGES = {"alias": "Enc2+", "xcoder": "encoder", "stages": [False] + [True] * 3}
 
 
 class MoELayerPlanner(MobileUNetPlanner):
