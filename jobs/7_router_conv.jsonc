@@ -1,10 +1,10 @@
 [
   {
     "configs": [
-      "MN-4x-S_MoE-ROUTERACTIVATION-K1-S1-LAYERS-STAGES-E4",
-      "MN-4x-S_MoE-ROUTERACTIVATION-K1-S2-LAYERS-STAGES-E4",
-      "MN-4x-S_MoE-ROUTERACTIVATION-K3-S1-LAYERS-STAGES-E4"
-      // "MN-4x-S_MoE-ROUTERACTIVATION-K3-S2-LAYERS-STAGES-E4"
+      "MN-4x-S_MoE-SigGAPNorm-K1-S1-PW+DW-Enc2+-E4",
+      "MN-4x-S_MoE-SigGAPNorm-K1-S2-PW+DW-Enc2+-E4",
+      "MN-4x-S_MoE-SigGAPNorm-K3-S1-PW+DW-Enc2+-E4"
+      // "MN-4x-S_MoE-SigGAPNorm-K3-S2-PW+DW-Enc2+-E4"
     ],
     "folds": [
       0,

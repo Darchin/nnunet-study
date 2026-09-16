@@ -371,7 +371,11 @@ class MoEStagePlanner(MobileUNetPlanner):
         return new_configs
 
 
-SELECTED_STAGES = {"alias": "Enc2+", "xcoder": "encoder", "stages": [False] + [True] * 3}
+SELECTED_STAGES = {
+    "alias": "Enc2+",
+    "xcoder": "encoder",
+    "stages": [False] + [True] * 3,
+}
 
 
 class MoELayerPlanner(MobileUNetPlanner):
@@ -415,7 +419,7 @@ class MoELayerPlanner(MobileUNetPlanner):
         return new_configs
 
 
-SELECTED_LAYERS = {"alias": "", "pw_backend": "", "dw_backend": ""}
+SELECTED_LAYERS = {"alias": "PW+DW", "pw_backend": "bmm", "dw_backend": "bag"}
 
 
 class MoERouterConvPlanner(MobileUNetPlanner):
@@ -458,7 +462,7 @@ class MoERouterConvPlanner(MobileUNetPlanner):
         return new_configs
 
 
-SELECTED_ROUTER_CONV = {"kernel": 0, "stride": 0}
+SELECTED_ROUTER_CONV = {"kernel": 3, "stride": 2}
 
 
 class MoENumExpertsPlanner(MobileUNetPlanner):
