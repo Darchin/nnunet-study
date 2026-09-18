@@ -1,0 +1,10 @@
+[
+  {
+    "configs": [
+      "nnUNetPlans_3d_fullres"
+    ],
+    "folds": [
+      0, 1, 2, 3
+    ]
+  }
+]

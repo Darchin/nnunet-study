@@ -506,7 +506,7 @@ class MoENumExpertsPlanner(MobileUNetPlanner):
         return new_configs
 
 
-class BenchmarkPlanner(MobileUNetPlanner):
+class MobileUNetBenchmarkPlanner(MobileUNetPlanner):
     @property
     def configs(self):
         configs = super().configs
