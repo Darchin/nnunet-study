@@ -62,6 +62,7 @@ class MobileUNetPlanner(StemmedPlanner):
                     "min_lr": 1e-6,
                     "enable_deep_supervision": False,
                     "2d_aug": None,
+                    "use_nn_seg_resample": False,
                 },
             },
             "MN-2x": {
@@ -515,9 +516,9 @@ class BraTS2024GLIPlanner(MobileUNetPlanner):
 
         new_configs[f"MN-2x-S_Static"] = {
             "inherits_from": ["MN-2x-S"],
-            "trainer": {"2d_aug": True}
+            "trainer": {"2d_aug": True, "use_nn_seg_resample": True},
         }
-        
+
         new_configs[f"MN-2x-S_Dynamic"] = {
             "inherits_from": ["MN-2x-S_Static"],
             "architecture": {

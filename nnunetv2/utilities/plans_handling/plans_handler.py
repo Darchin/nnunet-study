@@ -170,6 +170,12 @@ class ConfigurationManager(object):
         return self.configuration.get('2d_aug', None)
 
     @property
+    def use_nn_seg_resample(self) -> bool:
+        if 'use_nn_seg_resample' in self.trainer:
+            return self.trainer['use_nn_seg_resample']
+        return self.configuration.get('use_nn_seg_resample', False)
+
+    @property
     def required_for_training(self) -> List[str]:
         return self.configuration.get('required_for_training', [])
 

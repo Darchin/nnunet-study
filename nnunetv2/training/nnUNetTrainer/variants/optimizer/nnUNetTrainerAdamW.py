@@ -1,11 +1,32 @@
+import functools
 import math
+from typing import List, Tuple, Union
 
 import numpy as np
 import torch
+from batchgeneratorsv2.helpers.scalar_type import RandomScalar
+from batchgeneratorsv2.transforms.base.basic_transform import BasicTransform
+from batchgeneratorsv2.transforms.spatial.spatial import SpatialTransform
 
 from nnunetv2.network_architecture.moe import Router
 from nnunetv2.training.data_augmentation.compute_initial_patch_size import get_patch_size
 from nnunetv2.training.nnUNetTrainer.nnUNetTrainer import nnUNetTrainer
+
+
+class class_or_instance_method:
+    def __init__(self, fn):
+        self.fn = fn
+        functools.update_wrapper(self, fn)
+
+    def __get__(self, instance, owner):
+        if instance is None:
+            def class_call(*args, **kwargs):
+                return self.fn(owner, *args, **kwargs)
+            return class_call
+
+        def instance_call(*args, **kwargs):
+            return self.fn(instance, *args, **kwargs)
+        return instance_call
 
 
 class LinearWarmupCosineAnnealingLR:
@@ -65,6 +86,7 @@ class nnUNetTrainerAdamW(nnUNetTrainer):
         'enable_deep_supervision',
         'router_schedule',
         '2d_aug',
+        'use_nn_seg_resample',
     }
 
     def __init__(self, plans: dict, configuration: str, fold: int, dataset_json: dict,
@@ -78,6 +100,7 @@ class nnUNetTrainerAdamW(nnUNetTrainer):
         self.min_lr = 1e-6
         self.enable_deep_supervision = False
         self.two_d_aug = None
+        self.use_nn_seg_resample = False
         self.router_scheduler = None
         self._apply_trainer_configuration()
 
@@ -111,6 +134,14 @@ class nnUNetTrainerAdamW(nnUNetTrainer):
                 )
             self.two_d_aug = val
 
+        if 'use_nn_seg_resample' in self.configuration_manager.configuration:
+            val = self.configuration_manager.configuration['use_nn_seg_resample']
+            if not isinstance(val, bool):
+                raise TypeError(
+                    f"configuration.use_nn_seg_resample must be a bool, got {type(val).__name__}"
+                )
+            self.use_nn_seg_resample = val
+
         trainer_config = self.configuration_manager.trainer
         if not trainer_config:
             return
@@ -129,6 +160,14 @@ class nnUNetTrainerAdamW(nnUNetTrainer):
                     f"trainer.2d_aug must be a bool or None, got {type(val).__name__}"
                 )
             self.two_d_aug = val
+
+        if 'use_nn_seg_resample' in trainer_config:
+            val = trainer_config['use_nn_seg_resample']
+            if not isinstance(val, bool):
+                raise TypeError(
+                    f"trainer.use_nn_seg_resample must be a bool, got {type(val).__name__}"
+                )
+            self.use_nn_seg_resample = val
 
         if 'initial_lr' in trainer_config:
             self.initial_lr = self._require_real(trainer_config['initial_lr'], 'initial_lr', 0)
@@ -256,4 +295,51 @@ class nnUNetTrainerAdamW(nnUNetTrainer):
         self.inference_allowed_mirroring_axes = mirror_axes
 
         return rotation_for_DA, do_dummy_2d_data_aug, initial_patch_size, mirror_axes
+
+    @class_or_instance_method
+    def get_training_transforms(
+        self_or_cls,
+        patch_size: Union[np.ndarray, Tuple[int]],
+        rotation_for_DA: RandomScalar,
+        deep_supervision_scales: Union[List, Tuple, None],
+        mirror_axes: Tuple[int, ...],
+        do_dummy_2d_data_aug: bool,
+        use_mask_for_norm: List[bool] = None,
+        is_cascaded: bool = False,
+        foreground_labels: Union[Tuple[int, ...], List[int]] = None,
+        regions: List[Union[List[int], Tuple[int, ...], int]] = None,
+        ignore_label: int = None,
+        use_nn_seg_resample: bool = None,
+    ) -> BasicTransform:
+        if use_nn_seg_resample is None:
+            use_nn_seg_resample = getattr(self_or_cls, 'use_nn_seg_resample', False)
+
+        transforms = nnUNetTrainer.get_training_transforms(
+            patch_size=patch_size,
+            rotation_for_DA=rotation_for_DA,
+            deep_supervision_scales=deep_supervision_scales,
+            mirror_axes=mirror_axes,
+            do_dummy_2d_data_aug=do_dummy_2d_data_aug,
+            use_mask_for_norm=use_mask_for_norm,
+            is_cascaded=is_cascaded,
+            foreground_labels=foreground_labels,
+            regions=regions,
+            ignore_label=ignore_label,
+        )
+
+        target_mode_seg = 'nearest' if use_nn_seg_resample else 'bilinear'
+
+        def _set_mode_seg(transform_list):
+            for t in transform_list:
+                if isinstance(t, SpatialTransform):
+                    t.mode_seg = target_mode_seg
+                elif hasattr(t, 'transforms') and isinstance(t.transforms, list):
+                    _set_mode_seg(t.transforms)
+
+        _set_mode_seg(transforms.transforms)
+
+        if getattr(self_or_cls, 'log_file', None) is not None:
+            self_or_cls.print_to_log_file(f'use_nn_seg_resample: {use_nn_seg_resample}')
+
+        return transforms
 
