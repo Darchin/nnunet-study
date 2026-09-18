@@ -107,7 +107,7 @@ class MobileUNetPlanner(StemmedPlanner):
             },
             "MN-2x-S": {
                 "inherits_from": "MN-2x",
-                "patch_size_multiplier": 6,
+                "patch_size_multiplier": 4,
                 "architecture": {"arch_kwargs": {"channels": [32, 64, 128, 192, 320]}},
             },
             "MN-2x-M": {
@@ -510,8 +510,8 @@ class MobileUNetBenchmarkPlanner(MobileUNetPlanner):
     @property
     def configs(self):
         configs = super().configs
-
         new_configs = configs
+
         new_configs[f"MN-4x-S_MoE"] = {
             "inherits_from": [f"MN-4x-S"],
             "architecture": {
@@ -530,6 +530,29 @@ class MobileUNetBenchmarkPlanner(MobileUNetPlanner):
                             }
                         )
                         for is_moe_stage in [False, True, True, True]
+                    ]
+                }
+            },
+        }
+
+        new_configs[f"MN-2x-S_MoE"] = {
+            "inherits_from": [f"MN-4x-S"],
+            "architecture": {
+                "arch_kwargs": {
+                    f"encoder_moe_configs": [
+                        (
+                            {}
+                            if not is_moe_stage
+                            else {
+                                "num_experts": 4,
+                                "pw_backend": "bmm",
+                                "dw_backend": "bag",
+                                "router_kernel_size": 3,
+                                "router_stride": 2,
+                                "router_op_seq": ["conv", "sigmoid", "gap", "norm"],
+                            }
+                        )
+                        for is_moe_stage in [False, False, True, True, True]
                     ]
                 }
             },
