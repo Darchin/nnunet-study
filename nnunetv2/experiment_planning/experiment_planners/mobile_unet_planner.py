@@ -61,6 +61,7 @@ class MobileUNetPlanner(StemmedPlanner):
                     "warmup_epochs": 5,
                     "min_lr": 1e-6,
                     "enable_deep_supervision": False,
+                    "2d_aug": None,
                 },
             },
             "MN-2x": {
@@ -506,14 +507,19 @@ class MoENumExpertsPlanner(MobileUNetPlanner):
         return new_configs
 
 
-class MobileUNetBenchmarkPlanner(MobileUNetPlanner):
+class BraTS2024GLIPlanner(MobileUNetPlanner):
     @property
     def configs(self):
         configs = super().configs
         new_configs = configs
 
-        new_configs[f"MN-2x-S_MoE"] = {
+        new_configs[f"MN-2x-S_Static"] = {
             "inherits_from": ["MN-2x-S"],
+            "trainer": {"2d_aug": True}
+        }
+        
+        new_configs[f"MN-2x-S_Dynamic"] = {
+            "inherits_from": ["MN-2x-S_Static"],
             "architecture": {
                 "arch_kwargs": {
                     f"encoder_moe_configs": [
@@ -530,29 +536,6 @@ class MobileUNetBenchmarkPlanner(MobileUNetPlanner):
                             }
                         )
                         for is_moe_stage in [False, False, True, True, True]
-                    ]
-                }
-            },
-        }
-
-        new_configs[f"MN-4x-S_MoE"] = {
-            "inherits_from": ["MN-4x-S"],
-            "architecture": {
-                "arch_kwargs": {
-                    f"encoder_moe_configs": [
-                        (
-                            {}
-                            if not is_moe_stage
-                            else {
-                                "num_experts": 4,
-                                "pw_backend": "bmm",
-                                "dw_backend": "bag",
-                                "router_kernel_size": 3,
-                                "router_stride": 2,
-                                "router_op_seq": ["conv", "sigmoid", "gap", "norm"],
-                            }
-                        )
-                        for is_moe_stage in [False, True, True, True]
                     ]
                 }
             },

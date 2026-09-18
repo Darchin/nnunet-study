@@ -164,6 +164,12 @@ class ConfigurationManager(object):
         return self.configuration.get('trainer', {})
 
     @property
+    def two_d_aug(self) -> Union[bool, None]:
+        if '2d_aug' in self.trainer:
+            return self.trainer['2d_aug']
+        return self.configuration.get('2d_aug', None)
+
+    @property
     def required_for_training(self) -> List[str]:
         return self.configuration.get('required_for_training', [])
 

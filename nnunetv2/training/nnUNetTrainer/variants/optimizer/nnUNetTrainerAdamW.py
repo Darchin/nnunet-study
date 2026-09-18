@@ -1,8 +1,10 @@
 import math
 
+import numpy as np
 import torch
 
 from nnunetv2.network_architecture.moe import Router
+from nnunetv2.training.data_augmentation.compute_initial_patch_size import get_patch_size
 from nnunetv2.training.nnUNetTrainer.nnUNetTrainer import nnUNetTrainer
 
 
@@ -62,6 +64,7 @@ class nnUNetTrainerAdamW(nnUNetTrainer):
         'min_lr',
         'enable_deep_supervision',
         'router_schedule',
+        '2d_aug',
     }
 
     def __init__(self, plans: dict, configuration: str, fold: int, dataset_json: dict,
@@ -74,6 +77,7 @@ class nnUNetTrainerAdamW(nnUNetTrainer):
         self.warmup_epochs = 5
         self.min_lr = 1e-6
         self.enable_deep_supervision = False
+        self.two_d_aug = None
         self.router_scheduler = None
         self._apply_trainer_configuration()
 
@@ -99,6 +103,14 @@ class nnUNetTrainerAdamW(nnUNetTrainer):
         return value
 
     def _apply_trainer_configuration(self):
+        if '2d_aug' in self.configuration_manager.configuration:
+            val = self.configuration_manager.configuration['2d_aug']
+            if val is not None and not isinstance(val, bool):
+                raise TypeError(
+                    f"configuration.2d_aug must be a bool or None, got {type(val).__name__}"
+                )
+            self.two_d_aug = val
+
         trainer_config = self.configuration_manager.trainer
         if not trainer_config:
             return
@@ -109,6 +121,14 @@ class nnUNetTrainerAdamW(nnUNetTrainer):
             raise ValueError(
                 f"Unknown trainer configuration keys for {self.__class__.__name__}: {sorted(unknown_keys)}"
             )
+
+        if '2d_aug' in trainer_config:
+            val = trainer_config['2d_aug']
+            if val is not None and not isinstance(val, bool):
+                raise TypeError(
+                    f"trainer.2d_aug must be a bool or None, got {type(val).__name__}"
+                )
+            self.two_d_aug = val
 
         if 'initial_lr' in trainer_config:
             self.initial_lr = self._require_real(trainer_config['initial_lr'], 'initial_lr', 0)
@@ -198,3 +218,42 @@ class nnUNetTrainerAdamW(nnUNetTrainer):
     def on_train_epoch_start(self):
         super().on_train_epoch_start()
         self._update_router_temperatures()
+
+    def configure_rotation_dummyDA_mirroring_and_inital_patch_size(self):
+        if self.two_d_aug is None:
+            return super().configure_rotation_dummyDA_mirroring_and_inital_patch_size()
+
+        patch_size = self.configuration_manager.patch_size
+        dim = len(patch_size)
+        if dim == 2:
+            if self.two_d_aug:
+                raise ValueError("2d_aug cannot be True for 2D configurations.")
+            do_dummy_2d_data_aug = False
+            if max(patch_size) / min(patch_size) > 1.5:
+                rotation_for_DA = (-15. / 360 * 2. * np.pi, 15. / 360 * 2. * np.pi)
+            else:
+                rotation_for_DA = (-180. / 360 * 2. * np.pi, 180. / 360 * 2. * np.pi)
+            mirror_axes = (0, 1)
+        elif dim == 3:
+            do_dummy_2d_data_aug = self.two_d_aug
+            if do_dummy_2d_data_aug:
+                rotation_for_DA = (-180. / 360 * 2. * np.pi, 180. / 360 * 2. * np.pi)
+            else:
+                rotation_for_DA = (-30. / 360 * 2. * np.pi, 30. / 360 * 2. * np.pi)
+            mirror_axes = (0, 1, 2)
+        else:
+            raise RuntimeError()
+
+        initial_patch_size = get_patch_size(patch_size[-dim:],
+                                            rotation_for_DA,
+                                            rotation_for_DA,
+                                            rotation_for_DA,
+                                            (0.85, 1.25))
+        if do_dummy_2d_data_aug:
+            initial_patch_size[0] = patch_size[0]
+
+        self.print_to_log_file(f'do_dummy_2d_data_aug: {do_dummy_2d_data_aug}')
+        self.inference_allowed_mirroring_axes = mirror_axes
+
+        return rotation_for_DA, do_dummy_2d_data_aug, initial_patch_size, mirror_axes
+
