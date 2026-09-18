@@ -57,7 +57,7 @@ class MobileUNetPlanner(StemmedPlanner):
                 "trainer": {
                     "initial_lr": 3e-4,
                     "weight_decay": 1e-3,
-                    "num_epochs": 500,
+                    "num_epochs": 1000,
                     "warmup_epochs": 5,
                     "min_lr": 1e-6,
                     "enable_deep_supervision": False,
