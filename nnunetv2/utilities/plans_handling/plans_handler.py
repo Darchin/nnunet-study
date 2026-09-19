@@ -128,6 +128,10 @@ class ConfigurationManager(object):
         return self.configuration.get('patch_size_unit')
 
     @property
+    def patch_size_aspect_ratio(self) -> Union[List[float], None]:
+        return self.configuration.get('patch_size_aspect_ratio')
+
+    @property
     def patch_size_multiplier(self) -> Union[int, None]:
         return self.configuration.get('patch_size_multiplier')
 
@@ -361,7 +365,14 @@ class PlansManager(object):
         if patch_size_unit is None or not cls._is_valid_patch_size_multiplier(patch_size_multiplier):
             return configuration
 
-        derived_patch_size = [int(i) * patch_size_multiplier for i in patch_size_unit]
+        aspect_ratio = configuration.get('patch_size_aspect_ratio')
+        if aspect_ratio is not None:
+            derived_patch_size = [
+                int(max(1, round(patch_size_multiplier * float(ar)))) * int(unit)
+                for unit, ar in zip(patch_size_unit, aspect_ratio)
+            ]
+        else:
+            derived_patch_size = [int(i) * patch_size_multiplier for i in patch_size_unit]
         existing_patch_size = configuration.get('patch_size')
         if existing_patch_size is not None:
             existing_patch_size = [int(i) for i in existing_patch_size]

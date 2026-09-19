@@ -121,15 +121,15 @@ class StemmedPlanner(ExperimentPlanner):
         median_shape: np.ndarray,
         stem_stride: np.ndarray,
         num_stages: int,
-    ) -> tuple[list[int], list[int]]:
+    ) -> tuple[list[float], list[int]]:
         physical_extent = np.asarray(target_spacing, dtype=float) * np.asarray(
             median_shape, dtype=float
         )
-        aspect_ratio = np.maximum(
-            1, np.rint(physical_extent / np.min(physical_extent)).astype(int)
-        )
+        aspect_ratio = (
+            physical_extent / np.min(physical_extent)
+        ).astype(float)
         patch_size_unit = (
-            np.asarray(stem_stride, dtype=int) * 2 ** (num_stages - 1) * aspect_ratio
+            np.asarray(stem_stride, dtype=int) * 2 ** (num_stages - 1)
         ).astype(int)
         return aspect_ratio.tolist(), patch_size_unit.tolist()
 
