@@ -85,7 +85,7 @@ class MemoryEfficientSoftDiceLoss(nn.Module):
                 y_onehot = y.to(torch.float32)
             else:
                 y_onehot = torch.zeros(x.shape, device=x.device, dtype=torch.float32)
-                y_onehot.scatter_(1, y.long(), 1)
+                y_onehot.scatter_(1, y.long().clamp(0, x.shape[1] - 1), 1)
 
             if not self.do_bg:
                 y_onehot = y_onehot[:, 1:]
@@ -143,7 +143,7 @@ def get_tp_fp_fn_tn(net_output, gt, axes=None, mask=None, square=False):
             y_onehot = gt.to(torch.float32)
         else:
             y_onehot = torch.zeros(net_output.shape, device=net_output.device, dtype=torch.float32)
-            y_onehot.scatter_(1, gt.long(), 1)
+            y_onehot.scatter_(1, gt.long().clamp(0, net_output.shape[1] - 1), 1)
 
     tp = net_output * y_onehot
     fp = net_output * (1 - y_onehot)

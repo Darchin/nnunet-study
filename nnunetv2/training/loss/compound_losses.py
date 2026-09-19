@@ -42,8 +42,10 @@ class DC_and_CE_loss(nn.Module):
             # remove ignore label from target, replace with one of the known labels. It doesn't matter because we
             # ignore gradients in those areas anyway
             target_dice = torch.where(mask, target, 0)
+            target_dice = torch.where(target_dice < 0, 0, target_dice)
             num_fg = mask.sum()
         else:
+            target = torch.where(target < 0, 0, target)
             target_dice = target
             mask = None
 
@@ -142,8 +144,10 @@ class DC_and_topk_loss(nn.Module):
             # ignore gradients in those areas anyway
             target_dice = torch.clone(target)
             target_dice[target == self.ignore_label] = 0
+            target_dice = torch.where(target_dice < 0, 0, target_dice)
             num_fg = mask.sum()
         else:
+            target = torch.where(target < 0, 0, target)
             target_dice = target
             mask = None
 
