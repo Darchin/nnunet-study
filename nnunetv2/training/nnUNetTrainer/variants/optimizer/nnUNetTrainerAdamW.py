@@ -87,6 +87,7 @@ class nnUNetTrainerAdamW(nnUNetTrainer):
         'router_schedule',
         '2d_aug',
         'use_nn_seg_resample',
+        'pin_memory',
     }
 
     def __init__(self, plans: dict, configuration: str, fold: int, dataset_json: dict,
@@ -101,6 +102,7 @@ class nnUNetTrainerAdamW(nnUNetTrainer):
         self.enable_deep_supervision = False
         self.two_d_aug = None
         self.use_nn_seg_resample = False
+        self.pin_memory = None
         self.router_scheduler = None
         self._apply_trainer_configuration()
 
@@ -168,6 +170,14 @@ class nnUNetTrainerAdamW(nnUNetTrainer):
                     f"trainer.use_nn_seg_resample must be a bool, got {type(val).__name__}"
                 )
             self.use_nn_seg_resample = val
+
+        if 'pin_memory' in trainer_config:
+            val = trainer_config['pin_memory']
+            if not isinstance(val, bool):
+                raise TypeError(
+                    f"trainer.pin_memory must be a bool, got {type(val).__name__}"
+                )
+            self.pin_memory = val
 
         if 'initial_lr' in trainer_config:
             self.initial_lr = self._require_real(trainer_config['initial_lr'], 'initial_lr', 0)
@@ -295,6 +305,11 @@ class nnUNetTrainerAdamW(nnUNetTrainer):
         self.inference_allowed_mirroring_axes = mirror_axes
 
         return rotation_for_DA, do_dummy_2d_data_aug, initial_patch_size, mirror_axes
+
+    def _should_pin_memory(self) -> bool:
+        if self.pin_memory is not None:
+            return self.pin_memory
+        return super()._should_pin_memory()
 
     @class_or_instance_method
     def get_training_transforms(

@@ -180,6 +180,12 @@ class ConfigurationManager(object):
         return self.configuration.get('use_nn_seg_resample', False)
 
     @property
+    def pin_memory(self) -> Union[bool, None]:
+        if 'pin_memory' in self.trainer:
+            return self.trainer['pin_memory']
+        return self.configuration.get('pin_memory', None)
+
+    @property
     def required_for_training(self) -> List[str]:
         return self.configuration.get('required_for_training', [])
 

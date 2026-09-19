@@ -309,8 +309,15 @@ class nnUNetDatasetBlosc2(nnUNetBaseDataset):
                  folder_with_segs_from_previous_stage: str = None):
         super().__init__(folder, identifiers, folder_with_segs_from_previous_stage)
         blosc2.set_nthreads(1)
-        # mmap does not work with Windows -> https://github.com/MIC-DKFZ/nnUNet/issues/2723
-        self.mmap_kwargs = {} if os.name == "nt" else {'mmap_mode': 'r'}
+        # mmap does not work reliably on Windows/WSL -> https://github.com/MIC-DKFZ/nnUNet/issues/2723
+        use_mmap = os.environ.get('nnUNet_blosc2_mmap')
+        if use_mmap is not None:
+            enable_mmap = use_mmap.lower() in ('true', '1', 't')
+        else:
+            import platform
+            is_wsl = 'microsoft' in platform.uname().release.lower()
+            enable_mmap = os.name != 'nt' and not is_wsl
+        self.mmap_kwargs = {'mmap_mode': 'r'} if enable_mmap else {}
 
     def __getitem__(self, identifier):
         return self.load_case(identifier)

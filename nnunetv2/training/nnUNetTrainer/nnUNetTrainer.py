@@ -664,6 +664,17 @@ class nnUNetTrainer(object):
                                          folder_with_segs_from_previous_stage=self.folder_with_segs_from_previous_stage)
         return dataset_tr, dataset_val
 
+    def _should_pin_memory(self) -> bool:
+        if 'nnUNet_pin_memory' in os.environ:
+            return os.environ['nnUNet_pin_memory'].lower() in ('true', '1', 't')
+        if self.device.type != 'cuda':
+            return False
+        import platform
+        if 'microsoft' in platform.uname().release.lower():
+            # Pinned host allocations leak and destabilize the virtualized dxgkrnl driver in WSL2 under high throughput
+            return False
+        return True
+
     def get_dataloaders(self):
         if self.dataset_class is None:
             self.dataset_class = infer_dataset_class(self.preprocessed_dataset_folder)
@@ -723,11 +734,11 @@ class nnUNetTrainer(object):
             mt_gen_train = NonDetMultiThreadedAugmenter(data_loader=dl_tr, transform=None,
                                                         num_processes=allowed_num_processes,
                                                         num_cached=max(6, allowed_num_processes // 2), seeds=None,
-                                                        pin_memory=self.device.type == 'cuda', wait_time=0.002)
+                                                        pin_memory=self._should_pin_memory(), wait_time=0.002)
             mt_gen_val = NonDetMultiThreadedAugmenter(data_loader=dl_val,
                                                       transform=None, num_processes=max(1, allowed_num_processes // 2),
                                                       num_cached=max(3, allowed_num_processes // 4), seeds=None,
-                                                      pin_memory=self.device.type == 'cuda',
+                                                      pin_memory=self._should_pin_memory(),
                                                       wait_time=0.002)
         # # let's get this party started
         _ = next(mt_gen_train)
