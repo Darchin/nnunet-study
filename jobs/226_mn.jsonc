@@ -1,8 +1,8 @@
 [
   {
     "configs": [
-      "MN-2x-S_Static",
-      "MN-2x-S_Dynamic"
+      "MN-2x-M_Static",
+      "MN-2x-M_Dynamic"
     ],
     "folds": [
       0, 1, 2, 3//, 4
