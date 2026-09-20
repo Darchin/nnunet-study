@@ -72,12 +72,53 @@ class TestDataset228BraTSPED(unittest.TestCase):
         self.assertEqual(dj["numTraining"], 2)
         self.assertEqual(dj["file_ending"], ".nii.gz")
         self.assertEqual(dj["channel_names"], {"0": "T1n", "1": "T1c", "2": "T2w", "3": "T2f"})
-        self.assertEqual(dj["labels"], {"background": 0, "ET": 1, "NET": 2, "CC": 3, "ED": 4})
-        self.assertIsNone(dj.get("regions_class_order"))
+        self.assertEqual(dj["labels"], {
+            "background": 0,
+            "whole tumor": [1, 2, 3, 4],
+            "tumor core": [1, 2, 3],
+            "cystic component": [3],
+            "enhancing tumor": [1]
+        })
+        self.assertEqual(dj.get("regions_class_order"), [4, 2, 3, 1])
 
         # Verify dataset integrity using nnU-Net's built-in verifier
         from nnunetv2.experiment_planning.verify_dataset_integrity import verify_dataset_integrity
         verify_dataset_integrity(output_dataset_dir, num_processes=1)
+
+    def test_convert_brats_ped_multiprocessing(self):
+        case_id = "BraTS-PED-00003-000"
+        case_dir = join(self.input_dir, case_id)
+        os.makedirs(case_dir, exist_ok=True)
+        for mod in ["t1n", "t1c", "t2w", "t2f", "seg"]:
+            self._create_dummy_nifti(join(case_dir, f"{case_id}-{mod}.nii.gz"))
+
+        with patch.dict(os.environ, {'nnUNet_raw': self.raw_dir}, clear=False):
+            with patch("nnunetv2.dataset_conversion.Dataset228_BraTS_PED.nnUNet_raw", self.raw_dir):
+                convert_brats_ped(self.input_dir, nnunet_dataset_id=228, num_processes=2)
+
+        output_dataset_dir = join(self.raw_dir, "Dataset228_BraTS_PED")
+        self.assertTrue(isdir(join(output_dataset_dir, "imagesTr")))
+        self.assertTrue(isfile(join(output_dataset_dir, "imagesTr", f"{case_id}_0000.nii.gz")))
+        self.assertTrue(isfile(join(output_dataset_dir, "labelsTr", f"{case_id}.nii.gz")))
+
+    def test_convert_brats_ped_no_regions(self):
+        case_id = "BraTS-PED-00004-000"
+        case_dir = join(self.input_dir, case_id)
+        os.makedirs(case_dir, exist_ok=True)
+        for mod in ["t1n", "t1c", "t2w", "t2f", "seg"]:
+            self._create_dummy_nifti(join(case_dir, f"{case_id}-{mod}.nii.gz"))
+
+        with patch.dict(os.environ, {'nnUNet_raw': self.raw_dir}, clear=False):
+            with patch("nnunetv2.dataset_conversion.Dataset228_BraTS_PED.nnUNet_raw", self.raw_dir):
+                convert_brats_ped(self.input_dir, nnunet_dataset_id=228, num_processes=1, use_regions=False)
+
+        output_dataset_dir = join(self.raw_dir, "Dataset228_BraTS_PED")
+        dataset_json_path = join(output_dataset_dir, "dataset.json")
+        with open(dataset_json_path, 'r') as f:
+            dj = json.load(f)
+
+        self.assertEqual(dj["labels"], {"background": 0, "ET": 1, "NET": 2, "CC": 3, "ED": 4})
+        self.assertIsNone(dj.get("regions_class_order"))
 
 
 if __name__ == '__main__':

@@ -514,13 +514,14 @@ class BraTS2024GLIPlanner(MobileUNetPlanner):
         configs = super().configs
         new_configs = configs
 
-        new_configs[f"MN-2x-S_Static"] = {
-            "inherits_from": ["MN-2x-S"],
-            "trainer": {"2d_aug": True, "use_nn_seg_resample": True},
+        new_configs["MN-2x-M_Static"] = {
+            "inherits_from": ["MN-2x-M"],
+            "patch_size_multiplier": 4,
+            # "trainer": {"2d_aug": False, "use_nn_seg_resample": False},
         }
-
-        new_configs[f"MN-2x-S_Dynamic"] = {
-            "inherits_from": ["MN-2x-S_Static"],
+        
+        new_configs["MN-2x-M_Dynamic"] = {
+            "inherits_from": ["MN-2x-M_Static"],
             "architecture": {
                 "arch_kwargs": {
                     f"encoder_moe_configs": [

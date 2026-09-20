@@ -43,7 +43,8 @@ def _copy_case(case_info: tuple) -> None:
 def convert_brats2024_gli(brats_base_dir: str,
                            nnunet_dataset_id: int = 226,
                            task_name: str = "BraTS2024_GLI",
-                           num_processes: int = 8) -> None:
+                           num_processes: int = 8,
+                           use_regions: bool = True) -> None:
     foldername = "Dataset%03.0d_%s" % (nnunet_dataset_id, task_name)
 
     # setting up nnU-Net folders
@@ -66,6 +67,25 @@ def convert_brats2024_gli(brats_base_dir: str,
         for t in tasks:
             _copy_case(t)
 
+    if use_regions:
+        labels = {
+            "background": 0,
+            "whole tumor": (1, 2, 3),
+            "tumor core": (1, 3),
+            "enhancing tumor": (3,),
+            "resection cavity": (4,)
+        }
+        regions_class_order = (2, 1, 3, 4)
+    else:
+        labels = {
+            "background": 0,
+            "NETC": 1,
+            "SNFH": 2,
+            "ET": 3,
+            "RC": 4
+        }
+        regions_class_order = None
+
     generate_dataset_json(
         out_base,
         channel_names={
@@ -74,22 +94,18 @@ def convert_brats2024_gli(brats_base_dir: str,
             2: "T2w",
             3: "T2f"
         },
-        labels={
-            "background": 0,
-            "NETC": 1,
-            "SNFH": 2,
-            "ET": 3,
-            "RC": 4
-        },
+        labels=labels,
         num_training_cases=len(cases),
         file_ending='.nii.gz',
-        regions_class_order=None,
+        regions_class_order=regions_class_order,
         dataset_name=task_name,
         reference='https://www.synapse.org/Synapse:syn53708249/wiki/627500',
         release='1.0',
         license='see https://www.synapse.org/Synapse:syn53708249/wiki/627508',
         description="BraTS 2024 Adult Glioma Post-treatment (BraTS-GLI) Challenge dataset. "
-                    "Labels: 1: Non-enhancing Tumor Core (NETC), "
+                    "Target regions: Whole Tumor (WT: 1+2+3), Tumor Core (TC: 1+3), "
+                    "Enhancing Tumor (ET: 3), Resection Cavity (RC: 4). "
+                    "Underlying classes: 1: Non-enhancing Tumor Core (NETC), "
                     "2: Surrounding Non-enhancing FLAIR Hyperintensity (SNFH), "
                     "3: Enhancing Tissue/Tumor (ET), 4: Resection Cavity (RC)."
     )
@@ -107,5 +123,8 @@ if __name__ == '__main__':
                         help='Task name for the dataset, default: BraTS2024_GLI')
     parser.add_argument('-np', '--num_processes', required=False, type=int, default=8,
                         help='Number of processes to copy case files, default: 8')
+    parser.add_argument('--no_regions', action='store_true', default=False,
+                        help='Disable region-based training and use mutually exclusive class labels (NETC: 1, SNFH: 2, ET: 3, RC: 4).')
     args = parser.parse_args()
-    convert_brats2024_gli(args.input_folder, args.d, task_name=args.task_name, num_processes=args.num_processes)
+    convert_brats2024_gli(args.input_folder, args.d, task_name=args.task_name,
+                          num_processes=args.num_processes, use_regions=not args.no_regions)

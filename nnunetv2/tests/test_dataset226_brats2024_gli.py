@@ -86,8 +86,14 @@ class TestDataset226BraTS2024GLI(unittest.TestCase):
         self.assertEqual(dj["numTraining"], 2)
         self.assertEqual(dj["file_ending"], ".nii.gz")
         self.assertEqual(dj["channel_names"], {"0": "T1n", "1": "T1c", "2": "T2w", "3": "T2f"})
-        self.assertEqual(dj["labels"], {"background": 0, "NETC": 1, "SNFH": 2, "ET": 3, "RC": 4})
-        self.assertIsNone(dj.get("regions_class_order"))
+        self.assertEqual(dj["labels"], {
+            "background": 0,
+            "whole tumor": [1, 2, 3],
+            "tumor core": [1, 3],
+            "enhancing tumor": [3],
+            "resection cavity": [4]
+        })
+        self.assertEqual(dj.get("regions_class_order"), [2, 1, 3, 4])
 
         # Verify dataset integrity using nnU-Net's built-in verifier
         from nnunetv2.experiment_planning.verify_dataset_integrity import verify_dataset_integrity
@@ -108,6 +114,28 @@ class TestDataset226BraTS2024GLI(unittest.TestCase):
         self.assertTrue(isdir(join(output_dataset_dir, "imagesTr")))
         self.assertTrue(isfile(join(output_dataset_dir, "imagesTr", f"{case_id}_0000.nii.gz")))
         self.assertTrue(isfile(join(output_dataset_dir, "labelsTr", f"{case_id}.nii.gz")))
+
+    def test_convert_brats2024_gli_no_regions(self):
+        case_id = "BraTS-GLI-00004-000"
+        case_dir = join(self.input_dir, case_id)
+        os.makedirs(case_dir, exist_ok=True)
+        for mod in ["t1n", "t1c", "t2w", "t2f"]:
+            self._create_dummy_nifti(join(case_dir, f"{case_id}-{mod}.nii.gz"))
+        seg_data = np.zeros((5, 5, 5), dtype=np.uint8)
+        seg_data[1, 1, 1] = 1
+        self._create_dummy_nifti(join(case_dir, f"{case_id}-seg.nii.gz"), values=seg_data)
+
+        with patch.dict(os.environ, {'nnUNet_raw': self.raw_dir}, clear=False):
+            with patch.object(brats_gli_module, "nnUNet_raw", self.raw_dir):
+                convert_brats2024_gli(self.input_dir, nnunet_dataset_id=226, num_processes=1, use_regions=False)
+
+        output_dataset_dir = join(self.raw_dir, "Dataset226_BraTS2024_GLI")
+        dataset_json_path = join(output_dataset_dir, "dataset.json")
+        with open(dataset_json_path, 'r') as f:
+            dj = json.load(f)
+
+        self.assertEqual(dj["labels"], {"background": 0, "NETC": 1, "SNFH": 2, "ET": 3, "RC": 4})
+        self.assertIsNone(dj.get("regions_class_order"))
 
 
 if __name__ == '__main__':
