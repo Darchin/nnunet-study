@@ -514,12 +514,39 @@ class BraTS2024GLIPlanner(MobileUNetPlanner):
         configs = super().configs
         new_configs = configs
 
-        new_configs["MN-2x-M_Static"] = {
-            "inherits_from": ["MN-2x-M"],
+        new_configs["MN-2x-S_Static"] = {
+            "inherits_from": ["MN-2x-S"],
             "patch_size_multiplier": 4,
-            # "trainer": {"2d_aug": False, "use_nn_seg_resample": False},
         }
-        
+
+        new_configs["MN-4x-S_Static"] = {
+            "inherits_from": ["MN-4x-S"],
+            "patch_size_multiplier": 4,
+        }
+
+        new_configs["MN-4x-S_Dynamic"] = {
+            "inherits_from": ["MN-4x-S_Static"],
+            "architecture": {
+                "arch_kwargs": {
+                    f"encoder_moe_configs": [
+                        (
+                            {}
+                            if not is_moe_stage
+                            else {
+                                "num_experts": 4,
+                                "pw_backend": "bmm",
+                                "dw_backend": "bag",
+                                "router_kernel_size": 3,
+                                "router_stride": 2,
+                                "router_op_seq": ["conv", "sigmoid", "gap", "norm"],
+                            }
+                        )
+                        for is_moe_stage in [False, True, True, False]
+                    ]
+                }
+            },
+        }
+
         new_configs["MN-2x-M_Dynamic"] = {
             "inherits_from": ["MN-2x-M_Static"],
             "architecture": {
@@ -537,8 +564,46 @@ class BraTS2024GLIPlanner(MobileUNetPlanner):
                                 "router_op_seq": ["conv", "sigmoid", "gap", "norm"],
                             }
                         )
-                        for is_moe_stage in [False, False, True, True, True]
+                        for is_moe_stage in [False, False, True, True, False]
                     ]
+                }
+            },
+        }
+
+        return new_configs
+
+
+class TemporaryPlanner(MobileUNetPlanner):
+    @property
+    def configs(self):
+        configs = super().configs
+        new_configs = configs
+
+        new_configs["MN-4x-WideThinDeep-MoE"] = {
+            "inherits_from": ["MN-4x"],
+            "patch_size_multiplier": 6,
+            "architecture": {
+                "arch_kwargs": {
+                    "encoder_depths": [3, 6, 12, 3],
+                    "decoder_depths": [1, 1, 1],
+                    "encoder_expansion_ratios": [1 / 2, 1 / 2, 1 / 2, 1 / 2],
+                    "decoder_expansion_ratios": [1.0, 1.0, 1.0],
+                    "channels": [128, 256, 384, 640],
+                    "encoder_moe_configs": [
+                        (
+                            {}
+                            if not is_moe_stage
+                            else {
+                                "num_experts": 4,
+                                "pw_backend": "bmm",
+                                "dw_backend": "bag",
+                                "router_kernel_size": 3,
+                                "router_stride": 2,
+                                "router_op_seq": ["conv", "sigmoid", "gap", "norm"],
+                            }
+                        )
+                        for is_moe_stage in [False, True, True, False]
+                    ],
                 }
             },
         }
