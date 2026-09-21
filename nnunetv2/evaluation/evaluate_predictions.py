@@ -104,8 +104,8 @@ def compute_metrics(reference_file: str, prediction_file: str, image_reader_writ
         mask_pred = region_or_label_to_mask(seg_pred, r)
         tp, fp, fn, tn = compute_tp_fp_fn_tn(mask_ref, mask_pred, ignore_mask)
         if tp + fp + fn == 0:
-            results['metrics'][r]['Dice'] = np.nan
-            results['metrics'][r]['IoU'] = np.nan
+            results['metrics'][r]['Dice'] = 1.0
+            results['metrics'][r]['IoU'] = 1.0
         else:
             results['metrics'][r]['Dice'] = 2 * tp / (2 * tp + fp + fn)
             results['metrics'][r]['IoU'] = tp / (tp + fp + fn)

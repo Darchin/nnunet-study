@@ -4,7 +4,7 @@ import shutil
 from typing import Union, Tuple, List, Callable
 
 import numpy as np
-from acvl_utils.morphology.morphology_helper import remove_all_but_largest_component
+from acvl_utils.morphology.morphology_helper import remove_all_but_largest_component, remove_components_cc3d
 from batchgenerators.utilities.file_and_folder_operations import load_json, subfiles, maybe_mkdir_p, join, isfile, \
     isdir, save_pickle, load_pickle, save_json
 from nnunetv2.configuration import default_num_processes
@@ -30,6 +30,22 @@ def remove_all_but_largest_component_from_segmentation(segmentation: np.ndarray,
     mask_keep = remove_all_but_largest_component(mask)
     ret = np.copy(segmentation)  # do not modify the input!
     ret[mask & ~mask_keep] = background_label
+    return ret
+
+
+def remove_components_smaller_than_threshold_from_segmentation(segmentation: np.ndarray,
+                                                              threshold_size: int,
+                                                              labels_or_regions: Union[int, Tuple[int, ...],
+                                                                                       List[Union[int, Tuple[int, ...]]]],
+                                                              background_label: int = 0) -> np.ndarray:
+    ret = np.copy(segmentation)
+    if not isinstance(labels_or_regions, list):
+        labels_or_regions = [labels_or_regions]
+    for l_or_r in labels_or_regions:
+        mask = region_or_label_to_mask(segmentation, l_or_r)
+        if np.any(mask):
+            cleaned_mask = remove_components_cc3d(mask.astype(np.uint8), threshold_size_in_pixels=threshold_size, connectivity=26)
+            ret[mask & (~cleaned_mask.astype(bool))] = background_label
     return ret
 
 
