@@ -23,10 +23,11 @@ def convert_predicted_logits_to_segmentation_with_correct_shape(predicted_logits
 
     # resample to original shape
     spacing_transposed = [properties_dict['spacing'][i] for i in plans_manager.transpose_forward]
-    current_spacing = configuration_manager.spacing if \
-        len(configuration_manager.spacing) == \
+    spacing_for_logits = configuration_manager.segmentation_spacing
+    current_spacing = spacing_for_logits if \
+        len(spacing_for_logits) == \
         len(properties_dict['shape_after_cropping_and_before_resampling']) else \
-        [spacing_transposed[0], *configuration_manager.spacing]
+        [spacing_transposed[0], *spacing_for_logits]
     predicted_logits = configuration_manager.resampling_fn_probabilities(predicted_logits,
                                             properties_dict['shape_after_cropping_and_before_resampling'],
                                             current_spacing,

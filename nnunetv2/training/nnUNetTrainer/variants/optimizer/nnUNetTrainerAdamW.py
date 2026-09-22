@@ -7,9 +7,15 @@ import torch
 from batchgeneratorsv2.helpers.scalar_type import RandomScalar
 from batchgeneratorsv2.transforms.base.basic_transform import BasicTransform
 from batchgeneratorsv2.transforms.spatial.spatial import SpatialTransform
+from batchgeneratorsv2.transforms.utils.nnunet_masking import MaskImageTransform
 
 from nnunetv2.network_architecture.moe import Router
+from nnunetv2.training.data_augmentation.custom_transforms.decoupled_spatial import (
+    PairedMaskImageTransform,
+    PairedSpatialTransform,
+)
 from nnunetv2.training.data_augmentation.compute_initial_patch_size import get_patch_size
+from nnunetv2.training.dataloading.split_resolution_data_loader import SplitResolutionDataLoader
 from nnunetv2.training.nnUNetTrainer.nnUNetTrainer import nnUNetTrainer
 
 
@@ -77,6 +83,7 @@ class LinearRouterTemperatureScheduler:
 
 
 class nnUNetTrainerAdamW(nnUNetTrainer):
+    supports_split_resolution = True
     configurable_trainer_keys = {
         'initial_lr',
         'weight_decay',
@@ -105,6 +112,26 @@ class nnUNetTrainerAdamW(nnUNetTrainer):
         self.pin_memory = None
         self.router_scheduler = None
         self._apply_trainer_configuration()
+        self._validate_split_resolution_configuration()
+
+    def _validate_split_resolution_configuration(self):
+        if not self.configuration_manager.split_resolution_geometry.is_split:
+            return
+        errors = []
+        if len(self.configuration_manager.patch_size) != 3:
+            errors.append("only 3D configurations are supported")
+        if self.configuration_manager.network_arch_class_name != \
+                "nnunetv2.network_architecture.mobile_unet.MobileUNet":
+            errors.append("architecture.network_class_name must be MobileUNet")
+        if self.is_cascaded:
+            errors.append("cascades are not supported")
+        if self.enable_deep_supervision:
+            errors.append("trainer.enable_deep_supervision must be false")
+        _, uses_dummy_2d, _, _ = self.configure_rotation_dummyDA_mirroring_and_inital_patch_size()
+        if uses_dummy_2d:
+            errors.append("dummy-2D augmentation must be disabled with trainer.2d_aug=false")
+        if errors:
+            raise RuntimeError("Invalid split-resolution configuration: " + "; ".join(errors))
 
     @staticmethod
     def _require_real(value, name: str, min_value: float = None, allow_zero: bool = False) -> float:
@@ -311,6 +338,81 @@ class nnUNetTrainerAdamW(nnUNetTrainer):
             return self.pin_memory
         return super()._should_pin_memory()
 
+    def get_dataloaders(self):
+        geometry = self.configuration_manager.split_resolution_geometry
+        if not geometry.is_split:
+            return super().get_dataloaders()
+
+        from batchgenerators.dataloading.nondet_multi_threaded_augmenter import NonDetMultiThreadedAugmenter
+        from batchgenerators.dataloading.single_threaded_augmenter import SingleThreadedAugmenter
+        from nnunetv2.training.dataloading.nnunet_dataset import infer_dataset_class
+        from nnunetv2.utilities.default_n_proc_DA import get_allowed_n_proc_DA
+
+        if self.dataset_class is None:
+            self.dataset_class = infer_dataset_class(self.preprocessed_dataset_folder)
+        rotation, dummy_2d, initial_patch_size, mirror_axes = \
+            self.configure_rotation_dummyDA_mirroring_and_inital_patch_size()
+        if dummy_2d:
+            raise RuntimeError("split-resolution training does not support dummy-2D augmentation")
+        initial_patch_size = [
+            int(math.ceil(size / denominator) * denominator)
+            for size, denominator in zip(initial_patch_size, geometry.denominators)
+        ]
+        initial_segmentation_patch_size = geometry.input_extent_to_target(initial_patch_size)
+        segmentation_patch_size = self.configuration_manager.segmentation_patch_size
+        transforms_train = self.get_training_transforms(
+            self.configuration_manager.patch_size, rotation, None, mirror_axes, False,
+            use_mask_for_norm=self.configuration_manager.use_mask_for_norm,
+            is_cascaded=False,
+            foreground_labels=self.label_manager.foreground_labels,
+            regions=self.label_manager.foreground_regions if self.label_manager.has_regions else None,
+            ignore_label=self.label_manager.ignore_label,
+            patch_size_seg=segmentation_patch_size,
+        )
+        transforms_val = self.get_validation_transforms(
+            None, is_cascaded=False,
+            foreground_labels=self.label_manager.foreground_labels,
+            regions=self.label_manager.foreground_regions if self.label_manager.has_regions else None,
+            ignore_label=self.label_manager.ignore_label,
+        )
+        dataset_train, dataset_val = self.get_tr_and_val_datasets()
+        common = dict(
+            label_manager=self.label_manager,
+            oversample_foreground_percent=self.oversample_foreground_percent,
+            sampling_probabilities=None,
+            pad_sides=None,
+            probabilistic_oversampling=self.probabilistic_oversampling,
+            geometry=geometry,
+        )
+        loader_train = SplitResolutionDataLoader(
+            dataset_train, self.batch_size, initial_patch_size,
+            self.configuration_manager.patch_size, transforms=transforms_train,
+            segmentation_patch_size=initial_segmentation_patch_size, **common,
+        )
+        loader_val = SplitResolutionDataLoader(
+            dataset_val, self.batch_size, self.configuration_manager.patch_size,
+            self.configuration_manager.patch_size, transforms=transforms_val,
+            segmentation_patch_size=segmentation_patch_size, **common,
+        )
+        allowed_processes = get_allowed_n_proc_DA()
+        if allowed_processes == 0:
+            train_generator = SingleThreadedAugmenter(loader_train, None)
+            val_generator = SingleThreadedAugmenter(loader_val, None)
+        else:
+            train_generator = NonDetMultiThreadedAugmenter(
+                data_loader=loader_train, transform=None, num_processes=allowed_processes,
+                num_cached=max(6, allowed_processes // 2), seeds=None,
+                pin_memory=self._should_pin_memory(), wait_time=0.002,
+            )
+            val_generator = NonDetMultiThreadedAugmenter(
+                data_loader=loader_val, transform=None, num_processes=max(1, allowed_processes // 2),
+                num_cached=max(3, allowed_processes // 4), seeds=None,
+                pin_memory=self._should_pin_memory(), wait_time=0.002,
+            )
+        _ = next(train_generator)
+        _ = next(val_generator)
+        return train_generator, val_generator
+
     @class_or_instance_method
     def get_training_transforms(
         self_or_cls,
@@ -325,6 +427,8 @@ class nnUNetTrainerAdamW(nnUNetTrainer):
         regions: List[Union[List[int], Tuple[int, ...], int]] = None,
         ignore_label: int = None,
         use_nn_seg_resample: bool = None,
+        patch_size_seg: Union[np.ndarray, Tuple[int]] = None,
+        **kwargs,
     ) -> BasicTransform:
         if use_nn_seg_resample is None:
             use_nn_seg_resample = getattr(self_or_cls, 'use_nn_seg_resample', False)
@@ -340,7 +444,43 @@ class nnUNetTrainerAdamW(nnUNetTrainer):
             foreground_labels=foreground_labels,
             regions=regions,
             ignore_label=ignore_label,
+            **kwargs,
         )
+
+        if patch_size_seg is not None and tuple(patch_size_seg) != tuple(patch_size):
+            for index, transform in enumerate(transforms.transforms):
+                if isinstance(transform, SpatialTransform):
+                    transforms.transforms[index] = PairedSpatialTransform(
+                        patch_size=transform.patch_size,
+                        patch_size_seg=tuple(patch_size_seg),
+                        patch_center_dist_from_border=transform.patch_center_dist_from_border,
+                        random_crop=transform.random_crop,
+                        p_elastic_deform=transform.p_elastic_deform,
+                        elastic_deform_scale=transform.elastic_deform_scale,
+                        elastic_deform_magnitude=transform.elastic_deform_magnitude,
+                        p_synchronize_def_scale_across_axes=transform.p_synchronize_def_scale_across_axes,
+                        p_rotation=transform.p_rotation,
+                        rotation=transform.rotation,
+                        p_rot_per_axis=transform.p_rot_per_axis,
+                        p_scaling=transform.p_scaling,
+                        scaling=transform.scaling,
+                        p_synchronize_scaling_across_axes=transform.p_synchronize_scaling_across_axes,
+                        bg_style_seg_sampling=transform.bg_style_seg_sampling,
+                        mode_seg=transform.mode_seg,
+                        border_mode_seg=transform.border_mode_seg,
+                        center_deformation=transform.center_deformation,
+                        mode_image=transform.mode_image,
+                        padding_mode_image=transform.padding_mode_image,
+                        padding_value_seg=transform.padding_value_seg,
+                        padding_value_image=transform.padding_value_image,
+                        align_corners=transform.align_corners,
+                    )
+                elif isinstance(transform, MaskImageTransform):
+                    transforms.transforms[index] = PairedMaskImageTransform(
+                        transform.apply_to_channels,
+                        transform.channel_idx_in_seg,
+                        transform.set_outside_to,
+                    )
 
         target_mode_seg = 'nearest' if use_nn_seg_resample else 'bilinear'
 
@@ -348,6 +488,8 @@ class nnUNetTrainerAdamW(nnUNetTrainer):
             for t in transform_list:
                 if isinstance(t, SpatialTransform):
                     t.mode_seg = target_mode_seg
+                    if isinstance(t, PairedSpatialTransform):
+                        t._target_transform.mode_seg = target_mode_seg
                 elif hasattr(t, 'transforms') and isinstance(t.transforms, list):
                     _set_mode_seg(t.transforms)
 
@@ -357,4 +499,3 @@ class nnUNetTrainerAdamW(nnUNetTrainer):
             self_or_cls.print_to_log_file(f'use_nn_seg_resample: {use_nn_seg_resample}')
 
         return transforms
-

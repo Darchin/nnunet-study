@@ -73,6 +73,8 @@ from nnunetv2.utilities.plans_handling.plans_handler import PlansManager, Config
 
 
 class nnUNetTrainer(object):
+    supports_split_resolution = False
+
     def __init__(self, plans: dict, configuration: str, fold: int, dataset_json: dict,
                  device: torch.device = torch.device('cuda')):
         # From https://grugbrain.dev/. Worth a read ya big brains ;-)
@@ -144,6 +146,12 @@ class nnUNetTrainer(object):
         # IMPORTANT! the mapping must be bijective, so lowres must point to fullres and vice versa (using
         # "previous_stage" and "next_stage"). Otherwise it won't work!
         self.is_cascaded = self.configuration_manager.previous_stage_name is not None
+        if (self.configuration_manager.split_resolution_geometry.is_split
+                and not self.supports_split_resolution):
+            raise RuntimeError(
+                "This configuration uses different image and segmentation spacing. "
+                "Split-resolution training is supported only by nnUNetTrainerAdamW."
+            )
         self.folder_with_segs_from_previous_stage = \
             join(nnUNet_results, self.plans_manager.dataset_name,
                  self.__class__.__name__ + '__' + self.plans_manager.plans_name + "__" +

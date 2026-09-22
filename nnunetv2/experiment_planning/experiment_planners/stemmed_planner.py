@@ -9,13 +9,28 @@ from nnunetv2.experiment_planning.experiment_planners.default_experiment_planner
 )
 from nnunetv2.paths import nnUNet_preprocessed
 from nnunetv2.preprocessing.resampling.default_resampling import compute_new_shape
+from nnunetv2.utilities.split_resolution import normalize_factor
 
 
 class StemmedPlanner(ExperimentPlanner):
     presets = {
-        "2x": {"stem_factor": 2, "num_stages": 5},
-        "3x": {"stem_factor": 3, "num_stages": 4},
-        "4x": {"stem_factor": 4, "num_stages": 4},
+        "2x": {"prep_downsampling_factor": 1, "stem_downsampling_factor": 2, "num_stages": 5},
+        "3x": {"prep_downsampling_factor": 1, "stem_downsampling_factor": 3, "num_stages": 4},
+        "4x": {"prep_downsampling_factor": 1, "stem_downsampling_factor": 4, "num_stages": 4},
+        "2x+2x": {"prep_downsampling_factor": 2, "stem_downsampling_factor": 2, "num_stages": 4},
+        "1.5x+2x": {"prep_downsampling_factor": 1.5, "stem_downsampling_factor": 2, "num_stages": 4},
+        "2x+2x-hires": {
+            "prep_downsampling_factor": 2,
+            "stem_downsampling_factor": 2,
+            "num_stages": 4,
+            "preserve_segmentation_resolution": True,
+        },
+        "1.5x+2x-hires": {
+            "prep_downsampling_factor": 1.5,
+            "stem_downsampling_factor": 2,
+            "num_stages": 4,
+            "preserve_segmentation_resolution": True,
+        },
     }
     spacing_percentile_min = 25
     spacing_percentile_step = 5
@@ -54,7 +69,7 @@ class StemmedPlanner(ExperimentPlanner):
     def determine_target_spacing_for_factor(
         cls,
         spacing_percentiles: Mapping[str, Sequence[float]],
-        stem_factor: int,
+        stem_downsampling_factor: int,
         percentile_min: int | None = None,
         percentile_step: int | None = None,
     ) -> np.ndarray:
@@ -70,7 +85,7 @@ class StemmedPlanner(ExperimentPlanner):
         target_spacing = median_spacing.copy()
 
         for axis in range(len(median_spacing)):
-            if median_spacing[axis] / reference_spacing <= stem_factor:
+            if median_spacing[axis] / reference_spacing <= stem_downsampling_factor:
                 continue
 
             selected_spacing = median_spacing[axis]
@@ -80,7 +95,7 @@ class StemmedPlanner(ExperimentPlanner):
                 candidate_spacing = cls._percentile_spacing(
                     spacing_percentiles, percentile
                 )[axis]
-                if candidate_spacing / reference_spacing < stem_factor:
+                if candidate_spacing / reference_spacing < stem_downsampling_factor:
                     break
                 selected_spacing = candidate_spacing
             else:
@@ -94,15 +109,17 @@ class StemmedPlanner(ExperimentPlanner):
 
     @staticmethod
     def determine_stem_stride(
-        median_spacing: np.ndarray, target_spacing: np.ndarray, stem_factor: int
+        median_spacing: np.ndarray,
+        target_spacing: np.ndarray,
+        stem_downsampling_factor: int,
     ) -> np.ndarray:
         median_spacing = np.asarray(median_spacing, dtype=float)
         target_spacing = np.asarray(target_spacing, dtype=float)
         reference_spacing = float(np.min(median_spacing))
         reference_axes = np.isclose(median_spacing, reference_spacing)
-        reference_post_stem_spacing = reference_spacing * stem_factor
+        reference_post_stem_spacing = reference_spacing * stem_downsampling_factor
         stride = np.ones_like(target_spacing, dtype=int)
-        stride_candidates = np.arange(1, stem_factor + 1, dtype=int)
+        stride_candidates = np.arange(1, stem_downsampling_factor + 1, dtype=int)
 
         for axis in range(len(target_spacing)):
             post_stem_spacing = target_spacing[axis] * stride_candidates
@@ -112,7 +129,7 @@ class StemmedPlanner(ExperimentPlanner):
             )
             stride[axis] = int(stride_candidates[np.argmin(anisotropy)])
 
-        stride[reference_axes] = stem_factor
+        stride[reference_axes] = stem_downsampling_factor
         return stride
 
     @staticmethod
@@ -193,13 +210,20 @@ class StemmedPlanner(ExperimentPlanner):
         num_stages: int,
         stem_stride: list[int],
         stem_kernel_size: list[int],
+        head_stride: list[int] | None = None,
+        head_kernel_size: list[int] | None = None,
     ) -> dict:
+        arch_kwargs = {
+            "num_stages": num_stages,
+            "stem_kernel_size": stem_kernel_size,
+            "stem_stride": stem_stride,
+        }
+        if head_stride is not None:
+            arch_kwargs["head_stride"] = head_stride
+        if head_kernel_size is not None:
+            arch_kwargs["head_kernel_size"] = head_kernel_size
         return {
-            "arch_kwargs": {
-                "num_stages": num_stages,
-                "stem_kernel_size": stem_kernel_size,
-                "stem_stride": stem_stride,
-            }
+            "arch_kwargs": arch_kwargs
         }
 
     def _base_configuration(self) -> dict:
@@ -234,17 +258,32 @@ class StemmedPlanner(ExperimentPlanner):
         median_spacing: np.ndarray,
     ) -> dict:
         preset = self.presets[configuration_name]
-        stem_factor = preset["stem_factor"]
+        stem_downsampling_factor = preset["stem_downsampling_factor"]
+        if (isinstance(stem_downsampling_factor, bool)
+                or not isinstance(stem_downsampling_factor, int)
+                or stem_downsampling_factor < 1):
+            raise ValueError("stem_downsampling_factor must be a positive integer")
+        prep_downsampling_factor = preset["prep_downsampling_factor"]
+        preserve_segmentation_resolution = preset.get("preserve_segmentation_resolution", False)
         num_stages = preset["num_stages"]
+
+        prep_fractions = normalize_factor(prep_downsampling_factor, len(median_spacing))
+        prep_arr = np.asarray([float(value) for value in prep_fractions], dtype=float)
+        scaled_spacing_percentiles = {
+            k: (np.asarray(v, dtype=float) * prep_arr).tolist()
+            for k, v in spacing_percentiles.items()
+        }
+        scaled_median_spacing = np.asarray(median_spacing, dtype=float) * prep_arr
+
         target_spacing = (
             np.asarray(self.overwrite_target_spacing, dtype=float)
             if self.overwrite_target_spacing is not None
             else self.determine_target_spacing_for_factor(
-                spacing_percentiles, stem_factor
+                scaled_spacing_percentiles, stem_downsampling_factor
             )
         )
         stem_stride = self.determine_stem_stride(
-            median_spacing, target_spacing, stem_factor
+            scaled_median_spacing, target_spacing, stem_downsampling_factor
         )
 
         target_spacing_transposed = self._transpose(target_spacing, transpose_forward)
@@ -266,7 +305,45 @@ class StemmedPlanner(ExperimentPlanner):
         stem_stride_list = stem_stride_transposed.tolist()
         stem_kernel_size = self.compute_stem_kernel_size(stem_stride_list)
 
-        return {
+        prep_transposed = [prep_fractions[i] for i in transpose_forward]
+        prep_transposed_values = [float(value) for value in prep_transposed]
+        expected_head_stride = [s * p for s, p in zip(stem_stride_list, prep_transposed)]
+        if preserve_segmentation_resolution and any(value.denominator != 1 for value in expected_head_stride):
+            raise ValueError(
+                f"Preset {configuration_name!r} has non-integral MobileUNet head stride: "
+                f"stem_stride={stem_stride_list}, prep_downsampling_factor={prep_downsampling_factor}"
+            )
+
+        head_stride = preset.get("head_stride")
+        head_kernel_size = preset.get("head_kernel_size")
+        if head_stride is not None:
+            if isinstance(head_stride, (int, float)):
+                head_stride_list = [int(head_stride)] * len(stem_stride_list)
+            else:
+                head_stride_list = self._transpose(head_stride, transpose_forward).astype(int).tolist()
+        elif preserve_segmentation_resolution:
+            head_stride_list = [value.numerator for value in expected_head_stride]
+        else:
+            head_stride_list = None
+        if preserve_segmentation_resolution and head_stride_list != [
+            value.numerator for value in expected_head_stride
+        ]:
+            raise ValueError(
+                f"Preset {configuration_name!r} head_stride must equal stem_stride * "
+                f"prep_downsampling_factor ({[value.numerator for value in expected_head_stride]})"
+            )
+
+        if head_kernel_size is not None:
+            if isinstance(head_kernel_size, (int, float)):
+                head_kernel_size_list = [int(head_kernel_size)] * len(stem_stride_list)
+            else:
+                head_kernel_size_list = self._transpose(head_kernel_size, transpose_forward).astype(int).tolist()
+        elif head_stride_list is not None:
+            head_kernel_size_list = self.compute_stem_kernel_size(head_stride_list)
+        else:
+            head_kernel_size_list = None
+
+        plan = {
             "inherits_from": "base",
             "data_identifier": self.generate_data_identifier(configuration_name),
             "preprocessor_name": self.preprocessor_name,
@@ -280,16 +357,30 @@ class StemmedPlanner(ExperimentPlanner):
                 int(round(i)) for i in median_shape_transposed
             ],
             "spacing": target_spacing_transposed.tolist(),
-            "stem_factor": stem_factor,
+            "prep_downsampling_factor": prep_transposed_values,
+            "stem_downsampling_factor": stem_downsampling_factor,
+            "preserve_segmentation_resolution": preserve_segmentation_resolution,
             "batch_dice": True,
             "architecture": self._stem_architecture(
-                num_stages, stem_stride_list, stem_kernel_size
+                num_stages, stem_stride_list, stem_kernel_size, head_stride_list, head_kernel_size_list
             ),
             "required_for_training": [
                 "patch_size_multiplier",
                 "architecture.network_class_name",
             ],
         }
+        if preserve_segmentation_resolution:
+            exact_target_patch = [p * f for p, f in zip(patch_size_unit, prep_transposed)]
+            if any(value.denominator != 1 for value in exact_target_patch):
+                raise ValueError(
+                    f"Preset {configuration_name!r} has non-integral segmentation patch geometry: "
+                    f"patch_size={patch_size_unit}, prep_downsampling_factor={prep_downsampling_factor}"
+                )
+            plan["segmentation_spacing"] = [
+                float(spacing / factor)
+                for spacing, factor in zip(target_spacing_transposed, prep_transposed)
+            ]
+        return plan
 
     def _additional_configurations(self) -> dict:
         return {}

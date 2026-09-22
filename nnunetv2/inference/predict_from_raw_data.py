@@ -11,6 +11,7 @@ from typing import Tuple, Union, List, Optional
 
 import numpy as np
 import torch
+import torch.nn.functional as F
 from acvl_utils.cropping_and_padding.padding import pad_nd_image
 from batchgenerators.dataloading.multi_threaded_augmenter import MultiThreadedAugmenter
 from batchgenerators.utilities.file_and_folder_operations import load_json, join, isfile, maybe_mkdir_p, isdir, subdirs, \
@@ -558,6 +559,18 @@ class nnUNetPredictor(object):
         else:
             steps = compute_steps_for_sliding_window(image_size, self.configuration_manager.patch_size,
                                                      self.tile_step_size)
+            geometry = self.configuration_manager.split_resolution_geometry
+            if geometry.is_split:
+                aligned_steps = []
+                for axis_steps, denominator, image, patch in zip(
+                    steps, geometry.denominators, image_size, self.configuration_manager.patch_size
+                ):
+                    last = image - patch
+                    values = {min(last, max(0, int(round(step / denominator)) * denominator))
+                              for step in axis_steps}
+                    values.update((0, last))
+                    aligned_steps.append(sorted(values))
+                steps = aligned_steps
             if self.verbose:
                 print(
                 f'n_steps {np.prod([len(i) for i in steps])}, image size is {image_size}, tile_size {self.configuration_manager.patch_size}, '
@@ -599,9 +612,25 @@ class nnUNetPredictor(object):
         predicted_logits = n_predictions = prediction = gaussian = workon = None
         results_device = self.device if do_on_device else torch.device('cpu')
 
+        geometry = self.configuration_manager.split_resolution_geometry
+        patch_size_seg = tuple(self.configuration_manager.segmentation_patch_size)
+        is_decoupled = geometry.is_split
+
+        if is_decoupled:
+            slicers_seg = [
+                (slice(None), *geometry.map_input_slices(sl[1:]))
+                for sl in slicers
+            ]
+            shape_seg = geometry.input_extent_to_target(data.shape[1:])
+            slicers_to_yield = list(zip(slicers, slicers_seg))
+        else:
+            slicers_seg = slicers
+            shape_seg = data.shape[1:]
+            slicers_to_yield = list(zip(slicers, slicers))
+
         def producer(d, slh, q):
-            for s in slh:
-                q.put((torch.clone(d[s][None], memory_format=torch.contiguous_format).to(self.device), s))
+            for s, s_seg in slh:
+                q.put((torch.clone(d[s][None], memory_format=torch.contiguous_format).to(self.device), s_seg))
             q.put('end')
 
         try:
@@ -612,19 +641,19 @@ class nnUNetPredictor(object):
                 print(f'move image to device {results_device}')
             data = data.to(results_device)
             queue = Queue(maxsize=2)
-            t = Thread(target=producer, args=(data, slicers, queue), daemon=True)
+            t = Thread(target=producer, args=(data, slicers_to_yield, queue), daemon=True)
             t.start()
 
             # preallocate arrays
             if self.verbose:
                 print(f'preallocating results arrays on device {results_device}')
-            predicted_logits = torch.zeros((self.label_manager.num_segmentation_heads, *data.shape[1:]),
+            predicted_logits = torch.zeros((self.label_manager.num_segmentation_heads, *shape_seg),
                                            dtype=torch.half,
                                            device=results_device)
-            n_predictions = torch.zeros(data.shape[1:], dtype=torch.half, device=results_device)
+            n_predictions = torch.zeros(shape_seg, dtype=torch.half, device=results_device)
 
             if self.use_gaussian:
-                gaussian = compute_gaussian(tuple(self.configuration_manager.patch_size), sigma_scale=1. / 8,
+                gaussian = compute_gaussian(patch_size_seg, sigma_scale=1. / 8,
                                             value_scaling_factor=10,
                                             device=results_device)
             else:
@@ -688,9 +717,26 @@ class nnUNetPredictor(object):
                 print("mirror_axes:", self.allowed_mirroring_axes if self.use_mirroring else None)
 
             # if input_image is smaller than tile_size we need to pad it to tile_size.
-            data, slicer_revert_padding = pad_nd_image(input_image, self.configuration_manager.patch_size,
-                                                       'constant', {'value': 0}, True,
-                                                       None)
+            geometry = self.configuration_manager.split_resolution_geometry
+            data, slicer_revert_padding = pad_nd_image(
+                input_image, self.configuration_manager.patch_size,
+                'constant', {'value': 0}, True,
+                list(geometry.denominators) if geometry.is_split else None,
+            )
+            if geometry.is_split:
+                extra_below = [(-s.start) % denominator
+                               for s, denominator in zip(slicer_revert_padding[1:], geometry.denominators)]
+                if any(extra_below):
+                    extra_above = [denominator - below if below else 0
+                                   for below, denominator in zip(extra_below, geometry.denominators)]
+                    padding = []
+                    for below, above in reversed(list(zip(extra_below, extra_above))):
+                        padding.extend((below, above))
+                    data = F.pad(data, padding, mode='constant', value=0)
+                    slicer_revert_padding = (slice(None), *[
+                        slice(old.start + below, old.stop + below)
+                        for old, below in zip(slicer_revert_padding[1:], extra_below)
+                    ])
 
             slicers = self._internal_get_sliding_window_slicers(data.shape[1:])
 
@@ -710,7 +756,13 @@ class nnUNetPredictor(object):
 
             empty_cache(self.device)
             # revert padding
-            predicted_logits = predicted_logits[(slice(None), *slicer_revert_padding[1:])]
+            if geometry.is_split:
+                slicer_revert_padding_seg = (
+                    slice(None), *geometry.map_input_crop(slicer_revert_padding[1:])
+                )
+                predicted_logits = predicted_logits[slicer_revert_padding_seg]
+            else:
+                predicted_logits = predicted_logits[(slice(None), *slicer_revert_padding[1:])]
         return predicted_logits
 
     def predict_from_files_sequential(self,

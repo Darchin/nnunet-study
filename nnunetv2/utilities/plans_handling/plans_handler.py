@@ -16,6 +16,7 @@ from batchgenerators.utilities.file_and_folder_operations import load_json, join
 from nnunetv2.imageio.reader_writer_registry import recursive_find_reader_writer_by_name
 from nnunetv2.utilities.find_class_by_name import recursive_find_python_class
 from nnunetv2.utilities.label_handling.label_handling import get_labelmanager_class_from_plans
+from nnunetv2.utilities.split_resolution import SplitResolutionGeometry
 
 # see https://adamj.eu/tech/2021/05/13/python-type-hints-how-to-fix-circular-imports/
 from typing import TYPE_CHECKING
@@ -142,6 +143,39 @@ class ConfigurationManager(object):
     @property
     def spacing(self) -> List[float]:
         return self.configuration['spacing']
+
+    @property
+    def prep_downsampling_factor(self) -> Union[int, float, List[float], None]:
+        return self.configuration.get('prep_downsampling_factor')
+
+    @property
+    def preserve_segmentation_resolution(self) -> bool:
+        return bool(self.configuration.get('preserve_segmentation_resolution', False))
+
+    @property
+    def segmentation_spacing(self) -> List[float]:
+        return self.configuration.get('segmentation_spacing', self.spacing)
+
+    @property
+    def split_resolution_geometry(self) -> SplitResolutionGeometry:
+        return SplitResolutionGeometry.from_spacings(self.spacing, self.segmentation_spacing)
+
+    @property
+    def segmentation_patch_size(self) -> Union[List[int], None]:
+        if self.patch_size is None:
+            return None
+        geometry = self.split_resolution_geometry
+        try:
+            return list(geometry.input_extent_to_target(self.patch_size))
+        except ValueError as error:
+            raise RuntimeError(
+                f"patch_size={self.patch_size} is incompatible with spacing={self.spacing} and "
+                f"segmentation_spacing={self.segmentation_spacing}: {error}"
+            ) from error
+
+    @property
+    def stem_downsampling_factor(self) -> Union[int, None]:
+        return self.configuration.get('stem_downsampling_factor')
 
     @property
     def normalization_schemes(self) -> List[str]:
