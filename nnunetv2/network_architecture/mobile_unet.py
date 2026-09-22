@@ -224,8 +224,8 @@ class Decoder(nn.Module):
         ndim: int,
         block_factory: type[UniversalInvertedBottleneckBlock],
         num_classes: int,
-        stem_kernel_size: ShapeNd,
-        stem_stride: ShapeNd,
+        head_kernel_size: ShapeNd,
+        head_stride: ShapeNd,
         num_stages: int,
         channels: Sequence[int],
         expansion_ratios: Sequence[float],
@@ -269,10 +269,10 @@ class Decoder(nn.Module):
             ndim,
             channels[0],
             num_classes,
-            stem_kernel_size,
-            stem_stride,
-            compute_padding(ndim, stem_kernel_size),
-            compute_output_padding(ndim, stem_kernel_size, stem_stride),
+            head_kernel_size,
+            head_stride,
+            compute_padding(ndim, head_kernel_size),
+            compute_output_padding(ndim, head_kernel_size, head_stride),
         )
 
     def forward(self, x_skip: list[torch.Tensor]) -> torch.Tensor:
@@ -320,11 +320,16 @@ class MobileUNetConfig:
     decoder_se_configs: SEConfig | Sequence[SEConfig] = field(default_factory=dict)
     decoder_moe_configs: MoEConfig | Sequence[MoEConfig] = field(default_factory=dict)
 
+    head_kernel_size: Optional[ShapeNd] = field(default=None)
+    head_stride: Optional[ShapeNd] = field(default=None)
+    
     deep_supervision: bool = False
 
     def __post_init__(self, norm_layer, norm_kwargs, act_layer, act_kwargs):
         self.stem_kernel_size = ensure_ntuple(self.stem_kernel_size, self.ndim)
         self.stem_stride = ensure_ntuple(self.stem_stride, self.ndim)
+        self.head_kernel_size = ensure_ntuple(self.head_kernel_size or self.stem_kernel_size, self.ndim)
+        self.head_stride = ensure_ntuple(self.head_stride or self.stem_stride, self.ndim)
 
         assert len(self.channels) == self.num_stages
         self.encoder_expansion_ratios = ensure_ntuple(
@@ -392,8 +397,8 @@ class MobileUNet(nn.Module):
             config.ndim,
             config.block_factory,
             config.num_classes,
-            config.stem_kernel_size,
-            config.stem_stride,
+            config.head_kernel_size,
+            config.head_stride,
             config.num_stages - 1,
             config.channels,
             config.decoder_expansion_ratios,
