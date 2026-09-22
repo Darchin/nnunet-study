@@ -8,9 +8,8 @@ import numpy as np
 import torch
 
 from nnunetv2.experiment_planning.experiment_planners.mobile_unet_planner import (
-    BraTS2024GLIPlanner,
+    BraTSPlanner,
     MobileUNetPlanner,
-    TemporaryPlanner,
 )
 from nnunetv2.experiment_planning.experiment_planners.stemmed_planner import StemmedPlanner
 from nnunetv2.inference.predict_from_raw_data import nnUNetPredictor
@@ -51,6 +50,10 @@ class SplitResolutionTests(unittest.TestCase):
         self.assertEqual(geometry.output_scale, (Fraction(3, 2), Fraction(2), Fraction(2)))
         self.assertEqual(geometry.denominators, (2, 1, 1))
         self.assertEqual(geometry.align_input_origin([-3, -2, 5]), (-4, -2, 5))
+        self.assertEqual(
+            geometry.align_input_origin_bounds([-35, 0, 0], [-35, 3, 3]),
+            ((-36, -36), (0, 3), (0, 3)),
+        )
         self.assertEqual(geometry.input_boundary_to_target([-4, -2, 5]), (-6, -4, 10))
         self.assertEqual(geometry.map_input_crop((slice(2, 11), slice(0, 3), slice(1, 4))),
                          (slice(3, 17), slice(0, 6), slice(2, 8)))
@@ -116,11 +119,10 @@ class SplitResolutionTests(unittest.TestCase):
         self.assertEqual(configuration.segmentation_patch_size, [12, 16, 8])
         self.assertEqual(configuration.segmentation_spacing, [1, 1, 2])
 
-    def test_mobile_hires_presets_do_not_remove_existing_research_planners(self):
+    def test_mobile_hires_presets_include_brats_research_planner(self):
         planner = object.__new__(MobileUNetPlanner)
         self.assertIn("MN-1.5x+2x-hires-S", planner.configs)
-        self.assertTrue(issubclass(BraTS2024GLIPlanner, MobileUNetPlanner))
-        self.assertTrue(issubclass(TemporaryPlanner, MobileUNetPlanner))
+        self.assertTrue(issubclass(BraTSPlanner, MobileUNetPlanner))
 
     def test_paired_transform_is_stateless(self):
         transform = PairedSpatialTransform(
@@ -228,6 +230,30 @@ class SplitResolutionTests(unittest.TestCase):
         self.assertEqual(tuple(batch["data"].shape), (1, 1, 4, 4, 4))
         self.assertEqual(tuple(batch["target"].shape), (1, 1, 6, 8, 4))
         self.assertTrue((batch["target"] == 1).any())
+
+    def test_split_loader_adds_virtual_padding_for_unaligned_singleton_origin(self):
+        geometry = SplitResolutionGeometry.from_spacings([1.5] * 3, [1] * 3)
+
+        class Dataset:
+            identifiers = ["case"]
+
+            @staticmethod
+            def load_case(_):
+                return (
+                    np.ones((1, 2, 2, 2), dtype=np.float32),
+                    np.ones((1, 3, 3, 3), dtype=np.int16),
+                    None,
+                    {"class_locations": {}},
+                )
+
+        label_manager = SimpleNamespace(has_ignore_label=False, all_labels=[0, 1])
+        loader = SplitResolutionDataLoader(
+            Dataset(), 1, (8, 8, 8), (8, 8, 8), label_manager,
+            transforms=None, segmentation_patch_size=(12, 12, 12), geometry=geometry,
+        )
+        batch = loader.generate_train_batch()
+        self.assertEqual(tuple(batch["data"].shape), (1, 1, 8, 8, 8))
+        self.assertEqual(tuple(batch["target"].shape), (1, 1, 12, 12, 12))
 
     def test_mobile_forward_matches_high_resolution_target(self):
         network = MobileUNet(

@@ -62,6 +62,33 @@ class SplitResolutionGeometry:
         return tuple((int(value) // denominator) * denominator
                      for value, denominator in zip(origin, self.denominators))
 
+    def align_input_origin_bounds(
+        self, lower: Sequence[int], upper: Sequence[int]
+    ) -> tuple[tuple[int, int], ...]:
+        """Return inclusive bounds containing only lattice-aligned crop origins.
+
+        If an interval is too narrow to contain an aligned origin, select the
+        closest origin outside it. Cropping already pads out-of-image regions,
+        so this amounts to at most ``denominator - 1`` additional voxels of
+        virtual padding and keeps image and target crop boundaries exact.
+        """
+        if len(lower) != self.ndim or len(upper) != self.ndim:
+            raise ValueError("bound dimensionality does not match geometry")
+        result = []
+        for lb, ub, denominator in zip(lower, upper, self.denominators):
+            lb, ub = int(lb), int(ub)
+            if lb > ub:
+                raise ValueError(f"invalid crop-origin interval [{lb}, {ub}]")
+            aligned_lower = -((-lb) // denominator) * denominator
+            aligned_upper = (ub // denominator) * denominator
+            if aligned_lower > aligned_upper:
+                below = (lb // denominator) * denominator
+                above = -((-ub) // denominator) * denominator
+                closest = below if lb - below <= above - ub else above
+                aligned_lower = aligned_upper = closest
+            result.append((aligned_lower, aligned_upper))
+        return tuple(result)
+
     def input_boundary_to_target(self, boundary: Sequence[int]) -> tuple[int, ...]:
         if len(boundary) != self.ndim:
             raise ValueError("boundary dimensionality does not match geometry")

@@ -27,16 +27,6 @@ class SplitResolutionDataLoader(nnUNetDataLoader):
                 f"the exact spacing-derived size {expected}"
             )
 
-    @staticmethod
-    def _aligned_bounds(lower: int, upper: int, denominator: int) -> tuple[int, int]:
-        aligned_lower = -((-lower) // denominator) * denominator
-        aligned_upper = (upper // denominator) * denominator
-        if aligned_lower > aligned_upper:
-            raise RuntimeError(
-                f"no crop origin aligned to denominator {denominator} exists in [{lower}, {upper}]"
-            )
-        return aligned_lower, aligned_upper
-
     def get_bbox(self, data_shape: np.ndarray, force_fg: bool, class_locations: Union[dict, None],
                  overwrite_class: Union[int, Tuple[int, ...]] = None, verbose: bool = False):
         need_to_pad = self.need_to_pad.copy()
@@ -47,8 +37,7 @@ class SplitResolutionDataLoader(nnUNetDataLoader):
         raw_lbs = [-need_to_pad[i] // 2 for i in range(len(data_shape))]
         raw_ubs = [data_shape[i] + need_to_pad[i] // 2 + need_to_pad[i] % 2 - self.patch_size[i]
                    for i in range(len(data_shape))]
-        bounds = [self._aligned_bounds(lb, ub, denominator)
-                  for lb, ub, denominator in zip(raw_lbs, raw_ubs, self.geometry.denominators)]
+        bounds = self.geometry.align_input_origin_bounds(raw_lbs, raw_ubs)
 
         selected_class = None
         if force_fg or self.has_ignore:
