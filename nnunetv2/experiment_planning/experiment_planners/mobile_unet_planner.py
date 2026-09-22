@@ -601,7 +601,7 @@ class MoENumExpertsPlanner(MobileUNetPlanner):
         return new_configs
 
 
-class BraTS2024GLIPlanner(MobileUNetPlanner):
+class BraTSPlanner(MobileUNetPlanner):
     @property
     def configs(self):
         configs = super().configs
