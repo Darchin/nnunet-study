@@ -299,13 +299,21 @@ class nnUNetTrainer(object):
                 self.print_to_log_file("INFO: torch.compile disabled because device is CPU")
             return False
 
-        # default torch.compile doesn't work on windows because there are apparently no triton wheels for it
-        # https://discuss.pytorch.org/t/windows-support-timeline-for-torch-compile/182268/2
+        # On Windows, torch.compile requires a Triton backend (e.g. triton-windows) and MSVC C++ build tools.
         if os.name == 'nt':
-            if 'nnUNet_compile' in os.environ.keys() and os.environ['nnUNet_compile'].lower() in ('true', '1', 't'):
-                self.print_to_log_file("INFO: torch.compile disabled because Windows is not natively supported. If "
-                                       "you know what you are doing, check https://discuss.pytorch.org/t/windows-support-timeline-for-torch-compile/182268/2")
-            return False
+            try:
+                import triton  # noqa: F401
+                has_triton = True
+            except ImportError:
+                has_triton = False
+
+            if not has_triton:
+                if 'nnUNet_compile' in os.environ.keys() and os.environ['nnUNet_compile'].lower() in ('true', '1', 't'):
+                    self.print_to_log_file(
+                        "INFO: torch.compile disabled because triton is not installed on Windows. "
+                        "Install triton-windows or configure a compatible backend."
+                    )
+                return False
 
         if 'nnUNet_compile' not in os.environ.keys():
             return True
