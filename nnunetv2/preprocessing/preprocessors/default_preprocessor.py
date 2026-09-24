@@ -76,11 +76,6 @@ class DefaultPreprocessor(object):
             target_spacing = [original_spacing[0]] + target_spacing
         new_shape = compute_new_shape(data.shape[1:], original_spacing, target_spacing)
 
-        target_spacing_seg = configuration_manager.segmentation_spacing
-        if len(target_spacing_seg) < len(data.shape[1:]):
-            target_spacing_seg = [original_spacing[0]] + target_spacing_seg
-        new_shape_seg = compute_new_shape(data.shape[1:], original_spacing, target_spacing_seg)
-
         # normalize
         # normalization MUST happen before resampling or we get huge problems with resampled nonzero masks no
         # longer fitting the images perfectly!
@@ -91,13 +86,10 @@ class DefaultPreprocessor(object):
         #       '\ntarget shape', new_shape, 'target_spacing', target_spacing)
         old_shape = data.shape[1:]
         data = configuration_manager.resampling_fn_data(data, new_shape, original_spacing, target_spacing)
-        if seg is not None:
-            seg = configuration_manager.resampling_fn_seg(seg, new_shape_seg, original_spacing, target_spacing_seg)
+        seg = configuration_manager.resampling_fn_seg(seg, new_shape, original_spacing, target_spacing)
         if self.verbose:
             print(f'old shape: {old_shape}, new_shape: {new_shape}, old_spacing: {original_spacing}, '
                   f'new_spacing: {target_spacing}, fn_data: {configuration_manager.resampling_fn_data}')
-            if seg is not None and not np.array_equal(new_shape_seg, new_shape):
-                print(f'new_shape_seg: {new_shape_seg}, new_spacing_seg: {target_spacing_seg}')
 
         # if we have a segmentation, sample foreground locations for oversampling and add those to properties
         if has_seg:
@@ -167,7 +159,7 @@ class DefaultPreprocessor(object):
             data.itemsize)
         block_size_seg, chunk_size_seg = comp_blosc2_params(
             seg.shape,
-            tuple(configuration_manager.segmentation_patch_size),
+            tuple(configuration_manager.patch_size),
             seg.itemsize)
 
         nnUNetDatasetBlosc2.save_case(data, seg, properties, output_filename_truncated,

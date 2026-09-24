@@ -13,17 +13,7 @@ class RobustCrossEntropyLoss(nn.CrossEntropyLoss):
         if target.ndim == input.ndim:
             assert target.shape[1] == 1
             target = target[:, 0]
-        target = target.long()
-        num_classes = input.shape[1]
-        if self.ignore_index is not None:
-            invalid = (target != self.ignore_index) & ((target < 0) | (target >= num_classes))
-            if invalid.any():
-                target = torch.where(invalid, 0, target)
-        else:
-            invalid = (target < 0) | (target >= num_classes)
-            if invalid.any():
-                target = torch.where(invalid, 0, target)
-        return super().forward(input, target)
+        return super().forward(input, target.long())
 
 
 class TopKLoss(RobustCrossEntropyLoss):

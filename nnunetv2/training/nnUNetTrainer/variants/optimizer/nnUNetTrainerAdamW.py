@@ -1,38 +1,9 @@
-import functools
 import math
-from typing import List, Tuple, Union
 
-import numpy as np
 import torch
-from batchgeneratorsv2.helpers.scalar_type import RandomScalar
-from batchgeneratorsv2.transforms.base.basic_transform import BasicTransform
-from batchgeneratorsv2.transforms.spatial.spatial import SpatialTransform
-from batchgeneratorsv2.transforms.utils.nnunet_masking import MaskImageTransform
 
 from nnunetv2.network_architecture.moe import Router
-from nnunetv2.training.data_augmentation.custom_transforms.decoupled_spatial import (
-    PairedMaskImageTransform,
-    PairedSpatialTransform,
-)
-from nnunetv2.training.data_augmentation.compute_initial_patch_size import get_patch_size
-from nnunetv2.training.dataloading.split_resolution_data_loader import SplitResolutionDataLoader
 from nnunetv2.training.nnUNetTrainer.nnUNetTrainer import nnUNetTrainer
-
-
-class class_or_instance_method:
-    def __init__(self, fn):
-        self.fn = fn
-        functools.update_wrapper(self, fn)
-
-    def __get__(self, instance, owner):
-        if instance is None:
-            def class_call(*args, **kwargs):
-                return self.fn(owner, *args, **kwargs)
-            return class_call
-
-        def instance_call(*args, **kwargs):
-            return self.fn(instance, *args, **kwargs)
-        return instance_call
 
 
 class LinearWarmupCosineAnnealingLR:
@@ -83,7 +54,6 @@ class LinearRouterTemperatureScheduler:
 
 
 class nnUNetTrainerAdamW(nnUNetTrainer):
-    supports_split_resolution = True
     configurable_trainer_keys = {
         'initial_lr',
         'weight_decay',
@@ -92,8 +62,6 @@ class nnUNetTrainerAdamW(nnUNetTrainer):
         'min_lr',
         'enable_deep_supervision',
         'router_schedule',
-        '2d_aug',
-        'use_nn_seg_resample',
         'pin_memory',
     }
 
@@ -107,31 +75,9 @@ class nnUNetTrainerAdamW(nnUNetTrainer):
         self.warmup_epochs = 5
         self.min_lr = 1e-6
         self.enable_deep_supervision = False
-        self.two_d_aug = None
-        self.use_nn_seg_resample = False
         self.pin_memory = None
         self.router_scheduler = None
         self._apply_trainer_configuration()
-        self._validate_split_resolution_configuration()
-
-    def _validate_split_resolution_configuration(self):
-        if not self.configuration_manager.split_resolution_geometry.is_split:
-            return
-        errors = []
-        if len(self.configuration_manager.patch_size) != 3:
-            errors.append("only 3D configurations are supported")
-        if self.configuration_manager.network_arch_class_name != \
-                "nnunetv2.network_architecture.mobile_unet.MobileUNet":
-            errors.append("architecture.network_class_name must be MobileUNet")
-        if self.is_cascaded:
-            errors.append("cascades are not supported")
-        if self.enable_deep_supervision:
-            errors.append("trainer.enable_deep_supervision must be false")
-        _, uses_dummy_2d, _, _ = self.configure_rotation_dummyDA_mirroring_and_inital_patch_size()
-        if uses_dummy_2d:
-            errors.append("dummy-2D augmentation must be disabled with trainer.2d_aug=false")
-        if errors:
-            raise RuntimeError("Invalid split-resolution configuration: " + "; ".join(errors))
 
     @staticmethod
     def _require_real(value, name: str, min_value: float = None, allow_zero: bool = False) -> float:
@@ -155,22 +101,6 @@ class nnUNetTrainerAdamW(nnUNetTrainer):
         return value
 
     def _apply_trainer_configuration(self):
-        if '2d_aug' in self.configuration_manager.configuration:
-            val = self.configuration_manager.configuration['2d_aug']
-            if val is not None and not isinstance(val, bool):
-                raise TypeError(
-                    f"configuration.2d_aug must be a bool or None, got {type(val).__name__}"
-                )
-            self.two_d_aug = val
-
-        if 'use_nn_seg_resample' in self.configuration_manager.configuration:
-            val = self.configuration_manager.configuration['use_nn_seg_resample']
-            if not isinstance(val, bool):
-                raise TypeError(
-                    f"configuration.use_nn_seg_resample must be a bool, got {type(val).__name__}"
-                )
-            self.use_nn_seg_resample = val
-
         trainer_config = self.configuration_manager.trainer
         if not trainer_config:
             return
@@ -181,22 +111,6 @@ class nnUNetTrainerAdamW(nnUNetTrainer):
             raise ValueError(
                 f"Unknown trainer configuration keys for {self.__class__.__name__}: {sorted(unknown_keys)}"
             )
-
-        if '2d_aug' in trainer_config:
-            val = trainer_config['2d_aug']
-            if val is not None and not isinstance(val, bool):
-                raise TypeError(
-                    f"trainer.2d_aug must be a bool or None, got {type(val).__name__}"
-                )
-            self.two_d_aug = val
-
-        if 'use_nn_seg_resample' in trainer_config:
-            val = trainer_config['use_nn_seg_resample']
-            if not isinstance(val, bool):
-                raise TypeError(
-                    f"trainer.use_nn_seg_resample must be a bool, got {type(val).__name__}"
-                )
-            self.use_nn_seg_resample = val
 
         if 'pin_memory' in trainer_config:
             val = trainer_config['pin_memory']
@@ -295,207 +209,7 @@ class nnUNetTrainerAdamW(nnUNetTrainer):
         super().on_train_epoch_start()
         self._update_router_temperatures()
 
-    def configure_rotation_dummyDA_mirroring_and_inital_patch_size(self):
-        if self.two_d_aug is None:
-            return super().configure_rotation_dummyDA_mirroring_and_inital_patch_size()
-
-        patch_size = self.configuration_manager.patch_size
-        dim = len(patch_size)
-        if dim == 2:
-            if self.two_d_aug:
-                raise ValueError("2d_aug cannot be True for 2D configurations.")
-            do_dummy_2d_data_aug = False
-            if max(patch_size) / min(patch_size) > 1.5:
-                rotation_for_DA = (-15. / 360 * 2. * np.pi, 15. / 360 * 2. * np.pi)
-            else:
-                rotation_for_DA = (-180. / 360 * 2. * np.pi, 180. / 360 * 2. * np.pi)
-            mirror_axes = (0, 1)
-        elif dim == 3:
-            do_dummy_2d_data_aug = self.two_d_aug
-            if do_dummy_2d_data_aug:
-                rotation_for_DA = (-180. / 360 * 2. * np.pi, 180. / 360 * 2. * np.pi)
-            else:
-                rotation_for_DA = (-30. / 360 * 2. * np.pi, 30. / 360 * 2. * np.pi)
-            mirror_axes = (0, 1, 2)
-        else:
-            raise RuntimeError()
-
-        initial_patch_size = get_patch_size(patch_size[-dim:],
-                                            rotation_for_DA,
-                                            rotation_for_DA,
-                                            rotation_for_DA,
-                                            (0.85, 1.25))
-        if do_dummy_2d_data_aug:
-            initial_patch_size[0] = patch_size[0]
-
-        self.print_to_log_file(f'do_dummy_2d_data_aug: {do_dummy_2d_data_aug}')
-        self.inference_allowed_mirroring_axes = mirror_axes
-
-        return rotation_for_DA, do_dummy_2d_data_aug, initial_patch_size, mirror_axes
-
     def _should_pin_memory(self) -> bool:
         if self.pin_memory is not None:
             return self.pin_memory
         return super()._should_pin_memory()
-
-    def get_dataloaders(self):
-        geometry = self.configuration_manager.split_resolution_geometry
-        if not geometry.is_split:
-            return super().get_dataloaders()
-
-        from batchgenerators.dataloading.nondet_multi_threaded_augmenter import NonDetMultiThreadedAugmenter
-        from batchgenerators.dataloading.single_threaded_augmenter import SingleThreadedAugmenter
-        from nnunetv2.training.dataloading.nnunet_dataset import infer_dataset_class
-        from nnunetv2.utilities.default_n_proc_DA import get_allowed_n_proc_DA
-
-        if self.dataset_class is None:
-            self.dataset_class = infer_dataset_class(self.preprocessed_dataset_folder)
-        rotation, dummy_2d, initial_patch_size, mirror_axes = \
-            self.configure_rotation_dummyDA_mirroring_and_inital_patch_size()
-        if dummy_2d:
-            raise RuntimeError("split-resolution training does not support dummy-2D augmentation")
-        initial_patch_size = [
-            int(math.ceil(size / denominator) * denominator)
-            for size, denominator in zip(initial_patch_size, geometry.denominators)
-        ]
-        initial_segmentation_patch_size = geometry.input_extent_to_target(initial_patch_size)
-        segmentation_patch_size = self.configuration_manager.segmentation_patch_size
-        transforms_train = self.get_training_transforms(
-            self.configuration_manager.patch_size, rotation, None, mirror_axes, False,
-            use_mask_for_norm=self.configuration_manager.use_mask_for_norm,
-            is_cascaded=False,
-            foreground_labels=self.label_manager.foreground_labels,
-            regions=self.label_manager.foreground_regions if self.label_manager.has_regions else None,
-            ignore_label=self.label_manager.ignore_label,
-            patch_size_seg=segmentation_patch_size,
-        )
-        transforms_val = self.get_validation_transforms(
-            None, is_cascaded=False,
-            foreground_labels=self.label_manager.foreground_labels,
-            regions=self.label_manager.foreground_regions if self.label_manager.has_regions else None,
-            ignore_label=self.label_manager.ignore_label,
-        )
-        dataset_train, dataset_val = self.get_tr_and_val_datasets()
-        common = dict(
-            label_manager=self.label_manager,
-            oversample_foreground_percent=self.oversample_foreground_percent,
-            sampling_probabilities=None,
-            pad_sides=None,
-            probabilistic_oversampling=self.probabilistic_oversampling,
-            geometry=geometry,
-        )
-        loader_train = SplitResolutionDataLoader(
-            dataset_train, self.batch_size, initial_patch_size,
-            self.configuration_manager.patch_size, transforms=transforms_train,
-            segmentation_patch_size=initial_segmentation_patch_size, **common,
-        )
-        loader_val = SplitResolutionDataLoader(
-            dataset_val, self.batch_size, self.configuration_manager.patch_size,
-            self.configuration_manager.patch_size, transforms=transforms_val,
-            segmentation_patch_size=segmentation_patch_size, **common,
-        )
-        allowed_processes = get_allowed_n_proc_DA()
-        if allowed_processes == 0:
-            train_generator = SingleThreadedAugmenter(loader_train, None)
-            val_generator = SingleThreadedAugmenter(loader_val, None)
-        else:
-            train_generator = NonDetMultiThreadedAugmenter(
-                data_loader=loader_train, transform=None, num_processes=allowed_processes,
-                num_cached=max(6, allowed_processes // 2), seeds=None,
-                pin_memory=self._should_pin_memory(), wait_time=0.002,
-            )
-            val_generator = NonDetMultiThreadedAugmenter(
-                data_loader=loader_val, transform=None, num_processes=max(1, allowed_processes // 2),
-                num_cached=max(3, allowed_processes // 4), seeds=None,
-                pin_memory=self._should_pin_memory(), wait_time=0.002,
-            )
-        _ = next(train_generator)
-        _ = next(val_generator)
-        return train_generator, val_generator
-
-    @class_or_instance_method
-    def get_training_transforms(
-        self_or_cls,
-        patch_size: Union[np.ndarray, Tuple[int]],
-        rotation_for_DA: RandomScalar,
-        deep_supervision_scales: Union[List, Tuple, None],
-        mirror_axes: Tuple[int, ...],
-        do_dummy_2d_data_aug: bool,
-        use_mask_for_norm: List[bool] = None,
-        is_cascaded: bool = False,
-        foreground_labels: Union[Tuple[int, ...], List[int]] = None,
-        regions: List[Union[List[int], Tuple[int, ...], int]] = None,
-        ignore_label: int = None,
-        use_nn_seg_resample: bool = None,
-        patch_size_seg: Union[np.ndarray, Tuple[int]] = None,
-        **kwargs,
-    ) -> BasicTransform:
-        if use_nn_seg_resample is None:
-            use_nn_seg_resample = getattr(self_or_cls, 'use_nn_seg_resample', False)
-
-        transforms = nnUNetTrainer.get_training_transforms(
-            patch_size=patch_size,
-            rotation_for_DA=rotation_for_DA,
-            deep_supervision_scales=deep_supervision_scales,
-            mirror_axes=mirror_axes,
-            do_dummy_2d_data_aug=do_dummy_2d_data_aug,
-            use_mask_for_norm=use_mask_for_norm,
-            is_cascaded=is_cascaded,
-            foreground_labels=foreground_labels,
-            regions=regions,
-            ignore_label=ignore_label,
-            **kwargs,
-        )
-
-        if patch_size_seg is not None and tuple(patch_size_seg) != tuple(patch_size):
-            for index, transform in enumerate(transforms.transforms):
-                if isinstance(transform, SpatialTransform):
-                    transforms.transforms[index] = PairedSpatialTransform(
-                        patch_size=transform.patch_size,
-                        patch_size_seg=tuple(patch_size_seg),
-                        patch_center_dist_from_border=transform.patch_center_dist_from_border,
-                        random_crop=transform.random_crop,
-                        p_elastic_deform=transform.p_elastic_deform,
-                        elastic_deform_scale=transform.elastic_deform_scale,
-                        elastic_deform_magnitude=transform.elastic_deform_magnitude,
-                        p_synchronize_def_scale_across_axes=transform.p_synchronize_def_scale_across_axes,
-                        p_rotation=transform.p_rotation,
-                        rotation=transform.rotation,
-                        p_rot_per_axis=transform.p_rot_per_axis,
-                        p_scaling=transform.p_scaling,
-                        scaling=transform.scaling,
-                        p_synchronize_scaling_across_axes=transform.p_synchronize_scaling_across_axes,
-                        bg_style_seg_sampling=transform.bg_style_seg_sampling,
-                        mode_seg=transform.mode_seg,
-                        border_mode_seg=transform.border_mode_seg,
-                        center_deformation=transform.center_deformation,
-                        mode_image=transform.mode_image,
-                        padding_mode_image=transform.padding_mode_image,
-                        padding_value_seg=transform.padding_value_seg,
-                        padding_value_image=transform.padding_value_image,
-                        align_corners=transform.align_corners,
-                    )
-                elif isinstance(transform, MaskImageTransform):
-                    transforms.transforms[index] = PairedMaskImageTransform(
-                        transform.apply_to_channels,
-                        transform.channel_idx_in_seg,
-                        transform.set_outside_to,
-                    )
-
-        target_mode_seg = 'nearest' if use_nn_seg_resample else 'bilinear'
-
-        def _set_mode_seg(transform_list):
-            for t in transform_list:
-                if isinstance(t, SpatialTransform):
-                    t.mode_seg = target_mode_seg
-                    if isinstance(t, PairedSpatialTransform):
-                        t._target_transform.mode_seg = target_mode_seg
-                elif hasattr(t, 'transforms') and isinstance(t.transforms, list):
-                    _set_mode_seg(t.transforms)
-
-        _set_mode_seg(transforms.transforms)
-
-        if getattr(self_or_cls, 'log_file', None) is not None:
-            self_or_cls.print_to_log_file(f'use_nn_seg_resample: {use_nn_seg_resample}')
-
-        return transforms

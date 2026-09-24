@@ -61,8 +61,6 @@ class MobileUNetPlanner(StemmedPlanner):
                     "warmup_epochs": 5,
                     "min_lr": 1e-6,
                     "enable_deep_supervision": False,
-                    "2d_aug": None,
-                    "use_nn_seg_resample": False,
                 },
             },
             "MN-2x": {
@@ -100,62 +98,6 @@ class MobileUNetPlanner(StemmedPlanner):
                         "ndim": 3,
                         "kernel_sizes": [[3] * 3 for _ in range(4)],
                         "strides": [[1] * 3] + [[2] * 3 for _ in range(4 - 1)],
-                        "encoder_depths": [3, 3, 9, 3],
-                        "decoder_depths": [1, 1, 1],
-                        "encoder_expansion_ratios": [2.0, 3.0, 4.0, 4.0],
-                        "decoder_expansion_ratios": [2.0, 3.0, 4.0],
-                    }
-                },
-            },
-            "MN-2x+2x": {
-                "inherits_from": ["2x+2x", "MN"],
-                "architecture": {
-                    "arch_kwargs": {
-                        "ndim": 3,
-                        "kernel_sizes": [[3] * 3 for _ in range(4)],
-                        "strides": [[1] * 3] + [[2] * 3 for _ in range(4 - 1)],
-                        "encoder_depths": [3, 3, 9, 3],
-                        "decoder_depths": [1, 1, 1],
-                        "encoder_expansion_ratios": [2.0, 3.0, 4.0, 4.0],
-                        "decoder_expansion_ratios": [2.0, 3.0, 4.0],
-                    }
-                },
-            },
-            "MN-1.5x+2x": {
-                "inherits_from": ["1.5x+2x", "MN"],
-                "architecture": {
-                    "arch_kwargs": {
-                        "ndim": 3,
-                        "kernel_sizes": [[3] * 3 for _ in range(4)],
-                        "strides": [[1] * 3] + [[2] * 3 for _ in range(4 - 1)],
-                        "encoder_depths": [3, 3, 9, 3],
-                        "decoder_depths": [1, 1, 1],
-                        "encoder_expansion_ratios": [2.0, 3.0, 4.0, 4.0],
-                        "decoder_expansion_ratios": [2.0, 3.0, 4.0],
-                    }
-                },
-            },
-            "MN-2x+2x-hires": {
-                "inherits_from": ["2x+2x-hires", "MN"],
-                "architecture": {
-                    "arch_kwargs": {
-                        "ndim": 3,
-                        "kernel_sizes": [[3] * 3 for _ in range(4)],
-                        "strides": [[1] * 3] + [[2] * 3 for _ in range(3)],
-                        "encoder_depths": [3, 3, 9, 3],
-                        "decoder_depths": [1, 1, 1],
-                        "encoder_expansion_ratios": [2.0, 3.0, 4.0, 4.0],
-                        "decoder_expansion_ratios": [2.0, 3.0, 4.0],
-                    }
-                },
-            },
-            "MN-1.5x+2x-hires": {
-                "inherits_from": ["1.5x+2x-hires", "MN"],
-                "architecture": {
-                    "arch_kwargs": {
-                        "ndim": 3,
-                        "kernel_sizes": [[3] * 3 for _ in range(4)],
-                        "strides": [[1] * 3] + [[2] * 3 for _ in range(3)],
                         "encoder_depths": [3, 3, 9, 3],
                         "decoder_depths": [1, 1, 1],
                         "encoder_expansion_ratios": [2.0, 3.0, 4.0, 4.0],
@@ -204,45 +146,8 @@ class MobileUNetPlanner(StemmedPlanner):
                     }
                 },
             },
-            "MN-2x+2x-S": {
-                "inherits_from": "MN-2x+2x",
-                "patch_size_multiplier": 6,
-                "architecture": {
-                    "arch_kwargs": {
-                        "channels": [64, 128, 192, 320],
-                    }
-                },
-            },
-            "MN-1.5x+2x-S": {
-                "inherits_from": "MN-1.5x+2x",
-                "patch_size_multiplier": 5,
-                "architecture": {
-                    "arch_kwargs": {
-                        "channels": [64, 128, 192, 320],
-                    }
-                },
-            },
-            "MN-2x+2x-hires-S": {
-                "inherits_from": "MN-2x+2x-hires",
-                "patch_size_multiplier": 6,
-                "architecture": {"arch_kwargs": {"channels": [64, 128, 192, 320]}},
-            },
-            "MN-1.5x+2x-hires-S": {
-                "inherits_from": "MN-1.5x+2x-hires",
-                "patch_size_multiplier": 5,
-                "architecture": {"arch_kwargs": {"channels": [64, 128, 192, 320]}},
-            },
             "MN-4x-M": {
                 "inherits_from": "MN-4x",
-                "patch_size_multiplier": 6,
-                "architecture": {
-                    "arch_kwargs": {
-                        "channels": [96, 192, 288, 480],
-                    }
-                },
-            },
-            "MN-2x+2x-M": {
-                "inherits_from": "MN-2x+2x",
                 "patch_size_multiplier": 6,
                 "architecture": {
                     "arch_kwargs": {
@@ -604,36 +509,4 @@ class MoENumExpertsPlanner(MobileUNetPlanner):
 class BraTSPlanner(MobileUNetPlanner):
     @property
     def configs(self):
-        configs = super().configs
-        new_configs = configs
-
-        new_configs["MN-1.5x+2x-hires-S_Static"] = {
-            "inherits_from": ["MN-1.5x+2x-hires-S"],
-            "patch_size_multiplier": 5,
-            "trainer": {"num_epochs": 1000},
-        }
-
-        # new_configs["MN-4x-S_Dynamic"] = {
-        #     "inherits_from": ["MN-4x-S_Static"],
-        #     "architecture": {
-        #         "arch_kwargs": {
-        #             f"encoder_moe_configs": [
-        #                 (
-        #                     {}
-        #                     if not is_moe_stage
-        #                     else {
-        #                         "num_experts": 4,
-        #                         "pw_backend": "bmm",
-        #                         "dw_backend": "bag",
-        #                         "router_kernel_size": 3,
-        #                         "router_stride": 2,
-        #                         "router_op_seq": ["conv", "sigmoid", "gap", "norm"],
-        #                     }
-        #                 )
-        #                 for is_moe_stage in [False, True, True, False]
-        #             ]
-        #         }
-        #     },
-        # }
-
-        return new_configs
+        return super().configs
