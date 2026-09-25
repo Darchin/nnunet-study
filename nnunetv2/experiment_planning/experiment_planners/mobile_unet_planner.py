@@ -509,4 +509,12 @@ class MoENumExpertsPlanner(MobileUNetPlanner):
 class BraTSPlanner(MobileUNetPlanner):
     @property
     def configs(self):
-        return super().configs
+        new_configs = super().configs
+
+        new_configs["MN-2x-M_Static"] = {
+            "inherits_from": ["MN-2x-M"],
+            "patch_size_multiplier": 4,
+            "trainer": {"num_epochs": 500},
+        }
+
+        return new_configs
