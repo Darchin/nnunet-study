@@ -7,7 +7,10 @@ import torch.nn as nn
 
 from nnunetv2.network_architecture.common import ConvBlock
 from nnunetv2.network_architecture.types import ModuleFactory, ShapeNd
-from nnunetv2.network_architecture.nd import ConvNd
+from nnunetv2.network_architecture.nd import (
+    ConvTransposeNd,
+    LinearUpsampleNd,
+)
 from nnunetv2.network_architecture.uib import (
     UniversalInvertedBottleneckBlock,
     SEConfig,
@@ -164,29 +167,22 @@ class DecoderStage(nn.Module):
     ):
         super().__init__()
 
-        self.upsample = block_factory(
+        self.upsample = LinearUpsampleNd(
             ndim,
-            in_channels,
-            out_channels,
-            expansion_ratio,
-            kernel_size,
-            stride,
-            normalization,
-            activation,
-            se_config,
-            moe_config,
-            transposed=True,
+            scale_factor=ensure_ntuple(
+                stride, ndim
+            ),  # non-float scale factors must be tuple (they can't be lists)
         )
 
         self.blocks = nn.ModuleList()
 
-        # first decoder block handles encoder/decoder feature map fusion
+        # first upsample block handles encoder/decoder feature map fusion
         self.blocks.append(
             block_factory(
                 ndim,
-                2 * out_channels,
+                in_channels + out_channels,
                 out_channels,
-                expansion_ratio / 2.0,
+                expansion_ratio,
                 kernel_size,
                 1,
                 normalization,
@@ -252,7 +248,13 @@ class Decoder(nn.Module):
                     block_factory,
                     channels[i + 1],
                     channels[i],
-                    expansion_ratios[i],
+                    # concatenating the encoder/decoder feature maps gives a feature map
+                    # with roughly ~3x the number of channels. The expansion ratio
+                    # works off the input channels, so this causes the first decoder block
+                    # to have a very wide MLP. We can divide by the factor below to effectively
+                    # base the expansion ratio off of the output number of channels
+                    # which is equivalent to the "standard" embedding dim of that decoder stage.
+                    expansion_ratios[i] * channels[i] / (channels[i] + channels[i + 1]),
                     kernel_sizes[i],
                     strides[i + 1],
                     normalization,
@@ -263,15 +265,14 @@ class Decoder(nn.Module):
                 )
             )
 
-        self.head = ConvNd(
-            N=ndim,
-            in_channels=channels[0],
-            out_channels=num_classes,
-            kernel_size=head_kernel_size,
-            stride=head_stride,
-            padding=compute_padding(ndim, head_kernel_size),
-            output_padding=compute_output_padding(ndim, head_kernel_size, head_stride),
-            transposed=True,
+        self.head = ConvTransposeNd(
+            ndim,
+            channels[0],
+            num_classes,
+            head_kernel_size,
+            head_stride,
+            compute_padding(ndim, head_kernel_size),
+            compute_output_padding(ndim, head_kernel_size, head_stride),
         )
 
     def forward(self, x_skip: list[torch.Tensor]) -> torch.Tensor:
@@ -321,18 +322,14 @@ class MobileUNetConfig:
 
     head_kernel_size: Optional[ShapeNd] = field(default=None)
     head_stride: Optional[ShapeNd] = field(default=None)
-
+    
     deep_supervision: bool = False
 
     def __post_init__(self, norm_layer, norm_kwargs, act_layer, act_kwargs):
         self.stem_kernel_size = ensure_ntuple(self.stem_kernel_size, self.ndim)
         self.stem_stride = ensure_ntuple(self.stem_stride, self.ndim)
-        self.head_kernel_size = ensure_ntuple(
-            self.head_kernel_size or self.stem_kernel_size, self.ndim
-        )
-        self.head_stride = ensure_ntuple(
-            self.head_stride or self.stem_stride, self.ndim
-        )
+        self.head_kernel_size = ensure_ntuple(self.head_kernel_size or self.stem_kernel_size, self.ndim)
+        self.head_stride = ensure_ntuple(self.head_stride or self.stem_stride, self.ndim)
 
         assert len(self.channels) == self.num_stages
         self.encoder_expansion_ratios = ensure_ntuple(

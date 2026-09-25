@@ -1,10 +1,9 @@
 from functools import partial
-from typing import Literal, NotRequired, Optional, Required, TypedDict
+from typing import Iterable, Literal, NotRequired, Optional, Required, TypedDict
 
 import torch
 import torch.nn as nn
 
-from nnunetv2.network_architecture.nd import ConvNd
 from nnunetv2.network_architecture.common import (
     ConvBlock,
     ConvBlockOpSeq,
@@ -17,11 +16,7 @@ from nnunetv2.network_architecture.moe import (
     RouterOpSeq,
 )
 from nnunetv2.network_architecture.types import ModuleFactory, ShapeNd
-from nnunetv2.network_architecture.utils import (
-    compute_padding,
-    compute_output_padding,
-    ensure_ntuple,
-)
+from nnunetv2.network_architecture.utils import compute_padding, ensure_ntuple
 
 
 class UIBOpSeq(TypedDict, total=False):
@@ -61,7 +56,6 @@ class UniversalInvertedBottleneckBlock(nn.Module):
         moe_config: MoEConfig = {},
         op_seq: UIBOpSeq = None,
         stride_placement: Literal["pre", "mid", "post"] = None,
-        transposed: bool = False,
     ):
         super().__init__()
 
@@ -70,7 +64,8 @@ class UniversalInvertedBottleneckBlock(nn.Module):
 
         # stride placement checks
         if any(
-            op_seq.get(dw, None) is not None for dw in ["dw_pre", "dw_mid", "dw_post"]
+            op_seq.get(dw, None) is not None
+            for dw in ["dw_pre", "dw_mid", "dw_post"]
         ):
             assert (
                 stride_placement is not None
@@ -87,9 +82,8 @@ class UniversalInvertedBottleneckBlock(nn.Module):
 
         hidden_channels = round(expansion_ratio * in_channels)
         padding = compute_padding(ndim, kernel_size)
-        output_padding = compute_output_padding(ndim, kernel_size, stride)
 
-        # intentionally not assigning `nn.Identity` to `se_op`
+        # intentioanlly not assigning `nn.Identity` to `se_op`
         # within the `else` branch to avoid silent failures
         if se_config:
             se_op = partial(
@@ -144,12 +138,10 @@ class UniversalInvertedBottleneckBlock(nn.Module):
                     kernel_size=kernel_size,
                     stride=stride if stride_placement == "pre" else 1,
                     padding=padding,
-                    output_padding=output_padding,
                     groups=in_channels,
                     normalization=normalization,
                     activation=activation,
                     op_seq=op_seq["dw_pre"],
-                    transposed=transposed if stride_placement == "pre" else False,
                 ),
             )
 
@@ -177,12 +169,10 @@ class UniversalInvertedBottleneckBlock(nn.Module):
                     kernel_size=kernel_size,
                     stride=stride if stride_placement == "mid" else 1,
                     padding=padding,
-                    output_padding=output_padding,
                     groups=hidden_channels,
                     normalization=normalization,
                     activation=activation,
                     op_seq=op_seq["dw_mid"],
-                    transposed=transposed if stride_placement == "mid" else False,
                 ),
             )
 
@@ -217,12 +207,10 @@ class UniversalInvertedBottleneckBlock(nn.Module):
                     kernel_size=kernel_size,
                     stride=stride if stride_placement == "post" else 1,
                     padding=padding,
-                    output_padding=output_padding,
                     groups=out_channels,
                     normalization=normalization,
                     activation=activation,
                     op_seq=op_seq["dw_post"],
-                    transposed=transposed if stride_placement == "post" else False,
                 ),
             )
 
@@ -266,7 +254,6 @@ class PreDWMultilayerPerceptronBlock(UniversalInvertedBottleneckBlock):
         activation: ModuleFactory = nn.Identity,
         se_config: SEConfig = {},
         moe_config: MoEConfig = {},
-        transposed: bool = False,
     ):
 
         op_seq = UIBOpSeq(
@@ -288,7 +275,6 @@ class PreDWMultilayerPerceptronBlock(UniversalInvertedBottleneckBlock):
             moe_config=moe_config,
             op_seq=op_seq,
             stride_placement="pre",
-            transposed=transposed,
         )
 
 
@@ -305,7 +291,6 @@ class InvertedBottleneckBlock(UniversalInvertedBottleneckBlock):
         activation: ModuleFactory = nn.Identity,
         se_config: SEConfig = {},
         moe_config: MoEConfig = {},
-        transposed: bool = False,
     ):
 
         op_seq = UIBOpSeq(
@@ -327,7 +312,6 @@ class InvertedBottleneckBlock(UniversalInvertedBottleneckBlock):
             moe_config=moe_config,
             op_seq=op_seq,
             stride_placement="mid",
-            transposed=transposed,
         )
 
 
@@ -344,7 +328,6 @@ class PreDWInvertedBottleneckBlock(UniversalInvertedBottleneckBlock):
         activation: ModuleFactory = nn.Identity,
         se_config: SEConfig = {},
         moe_config: MoEConfig = {},
-        transposed: bool = False,
     ):
 
         op_seq = UIBOpSeq(
@@ -367,7 +350,6 @@ class PreDWInvertedBottleneckBlock(UniversalInvertedBottleneckBlock):
             moe_config=moe_config,
             op_seq=op_seq,
             stride_placement="mid",
-            transposed=transposed,
         )
 
 
@@ -384,7 +366,6 @@ class ConvNeXtBlock(UniversalInvertedBottleneckBlock):
         activation: ModuleFactory = nn.Identity,
         se_config: SEConfig = {},
         moe_config: MoEConfig = {},
-        transposed: bool = False,
     ):
 
         op_seq = UIBOpSeq(
@@ -406,5 +387,4 @@ class ConvNeXtBlock(UniversalInvertedBottleneckBlock):
             moe_config=moe_config,
             op_seq=op_seq,
             stride_placement="pre",
-            transposed=transposed,
         )

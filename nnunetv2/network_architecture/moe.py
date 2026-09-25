@@ -129,13 +129,11 @@ class MoEConvNd(nn.Module):
         N: int,
         in_channels: int,
         out_channels: int,
-        kernel_size: int | ShapeNd = 1,
-        stride: int | ShapeNd = 1,
-        padding: int | ShapeNd = 0,
-        output_padding: int | ShapeNd = 0,
+        kernel_size: ShapeNd = 1,
+        stride: ShapeNd = 1,
+        padding: ShapeNd = 0,
         groups: int = 1,
         bias: bool = True,
-        transposed: bool = False,
         num_experts: int = 1,
         backend: MoEBackend = "bag",
     ):
@@ -150,9 +148,6 @@ class MoEConvNd(nn.Module):
         self.num_experts = num_experts
         self.backend = backend
 
-        if transposed == True:
-            raise NotImplemented("Dynamic transposed convolutions are not yet implemented.")
-        
         assert backend in {
             "bmm",
             "bag",
@@ -203,7 +198,7 @@ class MoEConvNd(nn.Module):
             if self.bias is not None:
                 nn.init.zeros_(self.bias[i])
 
-    # you could use a single einsum pattern
+    # you could us a single einsum pattern
     # that works for both biases and weights,
     # but this is a little bit clearer imo
     def blend_params(
@@ -310,7 +305,6 @@ class MoEConvBlock(ConvBlock):
         kernel_size: ShapeNd = 1,
         stride: ShapeNd = 1,
         padding: ShapeNd = 0,
-        output_padding: int | ShapeNd | None = None,
         groups: int = 1,
         bias: bool | None = None,
         num_experts: int = 1,
@@ -323,7 +317,6 @@ class MoEConvBlock(ConvBlock):
             "act",
         ],
     ):
-
         super().__init__(
             ndim=ndim,
             in_channels=in_channels,
