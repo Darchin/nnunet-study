@@ -4,7 +4,7 @@ from typing import Literal, Sequence
 import torch
 import torch.nn as nn
 
-from nnunetv2.network_architecture.nd import AdaptiveAvgPoolNd, ConvNd, ConvTransposeNd
+from nnunetv2.network_architecture.nd import AdaptiveAvgPoolNd, ConvNd
 from nnunetv2.network_architecture.types import ModuleFactory, ShapeNd
 from nnunetv2.network_architecture.utils import ensure_ntuple
 from nnunetv2.network_architecture.init import identity_init
@@ -52,6 +52,7 @@ class ConvBlock(nn.Module):
         kernel_size: int | ShapeNd = 1,
         stride: int | ShapeNd = 1,
         padding: int | ShapeNd = 0,
+        output_padding: int | ShapeNd = 0,
         groups: int = 1,
         bias: bool | None = None,
         convolution: ModuleFactory = ConvNd,
@@ -62,6 +63,7 @@ class ConvBlock(nn.Module):
             "norm",
             "act",
         ],
+        transposed: bool = False,
     ):
         super().__init__()
 
@@ -88,8 +90,10 @@ class ConvBlock(nn.Module):
                             kernel_size=kernel_size,
                             stride=stride,
                             padding=padding,
+                            output_padding=output_padding,
                             groups=groups,
                             bias=_has_bias,
+                            transposed=transposed,
                         ),
                     )
                     channels = out_channels
@@ -102,8 +106,41 @@ class ConvBlock(nn.Module):
 
     def reset_parameters(self):
         # initialize conv
-        if isinstance(self.conv, (nn.Conv1d, nn.Conv2d, nn.Conv3d)):
-            nn.init.kaiming_uniform_(self.conv.weight, nonlinearity="relu")
+        if isinstance(
+            self.conv,
+            (
+                nn.Conv1d,
+                nn.Conv2d,
+                nn.Conv3d,
+                nn.ConvTranspose1d,
+                nn.ConvTranspose2d,
+                nn.ConvTranspose3d,
+            ),
+        ):
+            is_depthwise_transposed = isinstance(
+                self.conv, (nn.ConvTranspose1d, nn.ConvTranspose2d, nn.ConvTranspose3d)
+            ) and self.conv.in_channels == self.conv.out_channels == self.conv.groups
+
+            if is_depthwise_transposed:
+                kernel = torch.ones(
+                    self.conv.kernel_size,
+                    dtype=self.conv.weight.dtype,
+                    device=self.conv.weight.device,
+                )
+                for axis, (size, stride) in enumerate(
+                    zip(self.conv.kernel_size, self.conv.stride)
+                ):
+                    grid = torch.arange(
+                        size, dtype=kernel.dtype, device=kernel.device
+                    )
+                    tent = (1 - (grid - (size - 1) / 2).abs() / stride).clamp(min=0)
+                    shape = [1] * len(self.conv.kernel_size)
+                    shape[axis] = size
+                    kernel *= tent.reshape(shape)
+                with torch.no_grad():
+                    self.conv.weight.copy_(kernel)
+            else:
+                nn.init.kaiming_uniform_(self.conv.weight, nonlinearity="relu")
             if self.conv.bias is not None:
                 nn.init.zeros_(self.conv.bias)
 
@@ -115,51 +152,3 @@ class ConvBlock(nn.Module):
         for module in self.children():
             x = module(x)
         return x
-
-
-class DepthwiseUpsample(nn.Module):
-    def __init__(self, ndim: int, channels: int, stride: ShapeNd, bias: bool = True):
-        super().__init__()
-        self._stride = ensure_ntuple(stride, ndim)
-        self._kernel_size = tuple(2 * s for s in self._stride)
-        self._padding = tuple(s // 2 for s in self._stride)
-
-        self.conv = ConvTransposeNd(
-            ndim,
-            channels,
-            channels,
-            self._kernel_size,
-            self._stride,
-            self._padding,
-            groups=channels,
-            bias=bias,
-        )
-
-        self.reset_parameters()
-
-    # Linear interpolation init
-    def reset_parameters(self):
-        with torch.no_grad():
-            dtype = self.conv.weight.dtype
-            device = self.conv.weight.device
-            ndim = len(self._stride)
-
-            kernel_nd = torch.tensor(1.0, dtype=dtype, device=device)
-
-            for dim_idx, s in enumerate(self._stride):
-                grid = torch.arange(2 * s, dtype=dtype, device=device)
-                w_1d = 1.0 - torch.abs(grid - (s - 0.5)) / s
-
-                shape = [1] * (2 + ndim)
-                shape[2 + dim_idx] = 2 * s
-                w_1d = w_1d.view(*shape)
-
-                kernel_nd = kernel_nd * w_1d
-
-            self.conv.weight.copy_(kernel_nd.expand_as(self.conv.weight))
-
-            if self.conv.bias is not None:
-                self.conv.bias.zero_()
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self.conv(x)

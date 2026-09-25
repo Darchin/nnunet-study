@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 from nnunetv2.network_architecture.types import ShapeNd, RatioNd
+from functools import partial
 
 
 class ConvNd:
@@ -12,48 +13,34 @@ class ConvNd:
         kernel_size: int | ShapeNd = 1,
         stride: int | ShapeNd = 1,
         padding: int | ShapeNd = 0,
-        groups: int = 1,
-        bias: bool = True,
-        *args,
-        **kwargs,
-    ) -> nn.Conv1d | nn.Conv2d | nn.Conv3d:
-        mod = getattr(nn, f"Conv{N}d")
-        return mod(
-            in_channels=in_channels,
-            out_channels=out_channels,
-            kernel_size=kernel_size,
-            stride=stride,
-            padding=padding,
-            groups=groups,
-            bias=bias,
-            *args,
-            **kwargs,
-        )
-
-
-class ConvTransposeNd:
-    def __new__(
-        cls,
-        N: int,
-        in_channels: int,
-        out_channels: int,
-        kernel_size: int | ShapeNd = 1,
-        stride: int | ShapeNd = 1,
-        padding: int | ShapeNd = 0,
         output_padding: int | ShapeNd = 0,
         groups: int = 1,
         bias: bool = True,
+        transposed: bool = False,
         *args,
         **kwargs,
-    ) -> nn.ConvTranspose1d | nn.ConvTranspose2d | nn.ConvTranspose3d:
-        mod = getattr(nn, f"ConvTranspose{N}d")
+    ) -> (
+        nn.Conv1d
+        | nn.Conv2d
+        | nn.Conv3d
+        | nn.ConvTranspose1d
+        | nn.ConvTranspose2d
+        | nn.ConvTranspose3d
+    ):
+        mod = (
+            getattr(nn, f"Conv{N}d")
+            if not transposed
+            else getattr(nn, f"ConvTranspose{N}d")
+        )
+
+        mod = partial(mod, output_padding=output_padding) if transposed else mod
+
         return mod(
             in_channels=in_channels,
             out_channels=out_channels,
             kernel_size=kernel_size,
             stride=stride,
             padding=padding,
-            output_padding=output_padding,
             groups=groups,
             bias=bias,
             *args,
