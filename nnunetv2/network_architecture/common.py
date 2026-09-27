@@ -66,7 +66,7 @@ class ConvBlock(nn.Module):
         super().__init__()
 
         assert "conv" in set(op_seq)
-        # assert set(op_seq).issubset({"conv", "norm", "act"})
+        assert set(op_seq).issubset({"conv", "norm", "act"})
 
         self._norm_is_identity = issubclass(
             normalization.func if isinstance(normalization, partial) else normalization,

@@ -1,28 +1,21 @@
+from typing import Literal, Optional, Sequence
 from functools import partial
-from typing import Literal, Sequence
-
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-
-from nnunetv2.network_architecture.common import ConvBlock, ModuleFactory
-from nnunetv2.network_architecture.nd import (
-    AdaptiveAvgPoolNd,
+from nnunetv2.network_architecture.common import (
+    ModuleFactory,
     ConvNd,
-    linear_upsampleNd,
+    AdaptiveAvgPoolNd,
+    ConvBlock,
+    ConvBlockOpSeq,
 )
 from nnunetv2.network_architecture.types import ShapeNd
-from nnunetv2.network_architecture.utils import (
-    InsertableModuleMixin,
-    compute_padding,
-    ensure_ntuple,
-)
+from nnunetv2.network_architecture.utils import compute_padding, ensure_ntuple
 
 type RouterOpSeq = Sequence[
     Literal["gap", "conv", "sigmoid", "softmax", "sproot", "norm"]
 ]
-
-type MoEConvBlockOpSeq = Sequence[Literal["conv", "norm", "act", "gate"]]
 
 type MoEBackend = Literal["bmm", "bag", "vmap", "naive"]
 
@@ -92,8 +85,6 @@ class Router(nn.Module):
                 s == 1 for s in ensure_ntuple(stride, ndim)
             ), "Post-GAP router convolution cannot be strided."
 
-        self._has_score_map = self.op_seq.index("gap") > self.op_seq.index("conv")
-
         for op in op_seq:
             match op:
                 case "conv":
@@ -127,40 +118,9 @@ class Router(nn.Module):
         nn.init.zeros_(self.conv.bias)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        score_map = None
-        for name, layer in self.named_children():
-            # we use _has_score_map check because
-            # the tensor before the GAP operation
-            # in a GAP-first router is not a score map.
-            if name == "gap" and self._has_score_map:
-                score_map = x
+        for layer in self.children():
             x = layer(x)
-        scores = x.squeeze(*list(range(2, x.ndim)))
-        return scores, score_map
-
-
-class Gate(nn.Module):
-    def __init__(
-        self,
-        ndim: int,
-        num_experts: int,
-        channels: int,
-    ):
-        super().__init__()
-
-        self.proj = ConvNd(N=ndim, in_channels=num_experts, out_channels=channels)
-
-        self.reset_parameters()
-
-    def reset_parameters(self):
-        nn.init.zeros_(self.proj.weight)
-        nn.init.zeros_(self.proj.bias)
-
-    def forward(self, x: torch.Tensor, scores: torch.Tensor) -> torch.Tensor:
-        gate = self.proj(scores)
-        gate = 2 * F.sigmoid(gate)
-        x = x * gate
-        return x
+        return x.squeeze(*list(range(2, x.ndim)))
 
 
 class MoEConvNd(nn.Module):
@@ -336,7 +296,7 @@ class MoEConvNd(nn.Module):
         return x
 
 
-class MoEConvBlock(ConvBlock, InsertableModuleMixin):
+class MoEConvBlock(ConvBlock):
     def __init__(
         self,
         ndim: int,
@@ -351,7 +311,11 @@ class MoEConvBlock(ConvBlock, InsertableModuleMixin):
         backend: MoEBackend = "bag",
         normalization: ModuleFactory = nn.Identity,
         activation: ModuleFactory = nn.Identity,
-        op_seq: MoEConvBlockOpSeq = ["conv", "norm", "act", "gate"],
+        op_seq: ConvBlockOpSeq = [
+            "conv",
+            "norm",
+            "act",
+        ],
     ):
         super().__init__(
             ndim=ndim,
@@ -368,40 +332,18 @@ class MoEConvBlock(ConvBlock, InsertableModuleMixin):
             op_seq=op_seq,
         )
 
-        if "gate" in op_seq:
-            num_channels = (
-                in_channels
-                if op_seq.index("gate") < op_seq.index("conv")
-                else out_channels
-            )
-            self.insert_module(
-                op_seq.index("gate"),
-                "gate",
-                Gate(ndim=ndim, num_experts=num_experts, channels=num_channels),
-            ),
-
-    def forward(
-        self,
-        x: torch.Tensor,
-        scores: torch.Tensor,
-        score_map: torch.Tensor | None = None,
-    ) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, scores: torch.Tensor) -> torch.Tensor:
         """
         Parameters
         ---
         x : Tensor of shape (batch_size, in_channels, ...)
             Input feature map.
         scores : Tensor of shape (batch_size, num_experts)
-            Per-sample expert scores.
-        score_map : Tensor of shape (batch_size, num_experts, ...)
-            Per-sample unreduced expert score map.
+            Per-sample score map for the experts.
         """
         for name, layer in self.named_children():
             if name == "conv":
                 x = layer(x, scores)
-            elif name == "gate":
-                assert score_map is not None
-                x = layer(x, linear_upsampleNd(score_map, x.shape[2:]))
             else:
                 x = layer(x)
         return x
