@@ -1,6 +1,8 @@
 import torch
 import torch.nn as nn
-from nnunetv2.network_architecture.types import ShapeNd, RatioNd
+import torch.nn.functional as F
+
+from nnunetv2.network_architecture.types import RatioNd, ShapeNd
 
 
 class ConvNd:
@@ -75,6 +77,23 @@ class AdaptiveAvgPoolNd:
             *args,
             **kwargs,
         )
+
+
+def linear_upsampleNd(
+    input: torch.Tensor,
+    size: int | ShapeNd = None,
+    scale_factor: float | RatioNd = None,
+    *args,
+    **kwargs,
+):
+    return F.interpolate(
+        input=input,
+        size=size,
+        scale_factor=scale_factor,
+        mode=["linear", "bilinear", "trilinear"][len(input.shape) - 3],
+        *args,
+        **kwargs,
+    )
 
 
 class LinearUpsampleNd:

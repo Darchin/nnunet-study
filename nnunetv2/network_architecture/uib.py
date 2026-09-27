@@ -3,6 +3,7 @@ from typing import Iterable, Literal, NotRequired, Optional, Required, TypedDict
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 from nnunetv2.network_architecture.common import (
     ConvBlock,
@@ -14,17 +15,18 @@ from nnunetv2.network_architecture.moe import (
     MoEConvBlock,
     Router,
     RouterOpSeq,
+    MoEConvBlockOpSeq,
 )
 from nnunetv2.network_architecture.types import ModuleFactory, ShapeNd
 from nnunetv2.network_architecture.utils import compute_padding, ensure_ntuple
 
 
 class UIBOpSeq(TypedDict, total=False):
-    dw_pre: NotRequired[ConvBlockOpSeq]
-    dw_mid: NotRequired[ConvBlockOpSeq]
-    dw_post: NotRequired[ConvBlockOpSeq]
-    pw_pre: Required[ConvBlockOpSeq]
-    pw_post: Required[ConvBlockOpSeq]
+    dw_pre: NotRequired[ConvBlockOpSeq | MoEConvBlockOpSeq]
+    dw_mid: NotRequired[ConvBlockOpSeq | MoEConvBlockOpSeq]
+    dw_post: NotRequired[ConvBlockOpSeq | MoEConvBlockOpSeq]
+    pw_pre: Required[ConvBlockOpSeq | MoEConvBlockOpSeq]
+    pw_post: Required[ConvBlockOpSeq | MoEConvBlockOpSeq]
 
 
 class SEConfig(TypedDict):
@@ -39,6 +41,7 @@ class MoEConfig(TypedDict):
     router_kernel_size: ShapeNd
     router_stride: ShapeNd
     router_op_seq: RouterOpSeq
+    gated: bool
 
 
 class UniversalInvertedBottleneckBlock(nn.Module):
@@ -64,8 +67,7 @@ class UniversalInvertedBottleneckBlock(nn.Module):
 
         # stride placement checks
         if any(
-            op_seq.get(dw, None) is not None
-            for dw in ["dw_pre", "dw_mid", "dw_post"]
+            op_seq.get(dw, None) is not None for dw in ["dw_pre", "dw_mid", "dw_post"]
         ):
             assert (
                 stride_placement is not None
@@ -126,6 +128,9 @@ class UniversalInvertedBottleneckBlock(nn.Module):
                     op_seq=moe_config["router_op_seq"],
                 ),
             )
+            if moe_config["gated"]:
+                for layer, os in op_seq.items():
+                    os.append("gate")
 
         # Pre depthwise conv
         if op_seq.get("dw_pre", None) is not None:
@@ -229,10 +234,12 @@ class UniversalInvertedBottleneckBlock(nn.Module):
         identity = x
 
         for layer in self.children():
+            # router is always first if it exists
+            # so scores/score_map will never be unbound
             if isinstance(layer, Router):
-                scores = layer(x)
+                scores, score_map = layer(x)
             elif isinstance(layer, MoEConvBlock):
-                x = layer(x, scores)
+                x = layer(x, scores, score_map)
             else:
                 x = layer(x)
 
