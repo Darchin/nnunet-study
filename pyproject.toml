@@ -54,6 +54,9 @@ dependencies = [
     "rich",
     "blosc2>=3.3.2",
     "timm>=1.0",                                 # required by nnssl finetuning (Primus); dynamic-network-architectures declares timm unpinned, which can resolve to a version predating timm.layers
+    "torch>=2.12,<2.14",
+    "triton>=3.7,<3.8; sys_platform != 'win32'",
+    "triton-windows>=3.7; sys_platform == 'win32'",
 ]
 
 [project.urls]
@@ -94,28 +97,11 @@ name = "pytorch-cu130"
 url = "https://download.pytorch.org/whl/cu130"
 explicit = true
 
-[[tool.uv.index]]
-name = "pytorch-cpu"
-url = "https://download.pytorch.org/whl/cpu"
-explicit = true
-
 [tool.uv.sources]
-torch = [
-    { index = "pytorch-cu130", extra = "cu130" },
-    { index = "pytorch-cpu", extra = "cpu" },
-]
+torch = { index = "pytorch-cu130" }
 
 [project.optional-dependencies]
 dev = ["pre-commit"]
-cu130 = [
-    "torch>=2.12,<2.14",
-    "triton>=3.7; sys_platform != 'win32'",
-    "triton-windows>=3.7; sys_platform == 'win32'",
-]
-cpu = ["torch>=2.12,<2.14"]
-
-[tool.uv]
-conflicts = [[{ extra = "cpu" }, { extra = "cu130" }]]
 
 [tool.setuptools.packages.find]
 include = ["nnunetv2*"]
