@@ -96,7 +96,8 @@ def cleanup_ddp():
 
 
 def run_ddp(rank, dataset_name_or_id, configuration, fold, tr, p, disable_checkpointing, c, val,
-            pretrained_weights, npz, disable_tta, checkpoint_interval, disable_train_val, world_size):
+            pretrained_weights, npz, disable_tta, checkpoint_interval, disable_train_val, world_size,
+            postprocess=False):
     setup_ddp(rank, world_size)
     torch.cuda.set_device(torch.device('cuda', dist.get_rank()))
 
@@ -106,6 +107,9 @@ def run_ddp(rank, dataset_name_or_id, configuration, fold, tr, p, disable_checkp
         nnunet_trainer.disable_checkpointing = disable_checkpointing
     nnunet_trainer.checkpoint_interval = checkpoint_interval
     nnunet_trainer.disable_train_val = disable_train_val
+    if postprocess:
+        from nnunetv2.postprocessing.validation import check_postprocessing_prerequisites
+        check_postprocessing_prerequisites(nnunet_trainer)
 
     assert not (c and val), 'Cannot set --c and --val flag at the same time. Dummy.'
 
@@ -118,7 +122,10 @@ def run_ddp(rank, dataset_name_or_id, configuration, fold, tr, p, disable_checkp
     if not val:
         nnunet_trainer.run_training()
 
-    nnunet_trainer.perform_actual_validation(npz, not disable_tta)
+    if postprocess:
+        nnunet_trainer.perform_actual_validation(npz, not disable_tta, postprocess=True)
+    else:
+        nnunet_trainer.perform_actual_validation(npz, not disable_tta)
     cleanup_ddp()
 
 
@@ -135,7 +142,8 @@ def run_training(dataset_name_or_id: Union[str, int],
                  device: torch.device = torch.device('cuda'),
                  disable_tta: bool = False,
                  checkpoint_interval: int = 50,
-                 disable_train_val: bool = False):
+                 disable_train_val: bool = False,
+                 postprocess: bool = False):
     if plans_identifier == 'nnUNetPlans':
         print("\n############################\n"
               "INFO: You are using the old nnU-Net default plans. We have updated our recommendations. "
@@ -177,7 +185,8 @@ def run_training(dataset_name_or_id: Union[str, int],
                      disable_tta,
                      checkpoint_interval,
                      disable_train_val,
-                     num_gpus),
+                     num_gpus,
+                     postprocess),
                  nprocs=num_gpus,
                  join=True)
     else:
@@ -188,6 +197,9 @@ def run_training(dataset_name_or_id: Union[str, int],
             nnunet_trainer.disable_checkpointing = disable_checkpointing
         nnunet_trainer.checkpoint_interval = checkpoint_interval
         nnunet_trainer.disable_train_val = disable_train_val
+        if postprocess:
+            from nnunetv2.postprocessing.validation import check_postprocessing_prerequisites
+            check_postprocessing_prerequisites(nnunet_trainer)
 
         assert not (continue_training and only_run_validation), 'Cannot set --c and --val flag at the same time. Dummy.'
 
@@ -200,7 +212,10 @@ def run_training(dataset_name_or_id: Union[str, int],
         if not only_run_validation:
             nnunet_trainer.run_training()
 
-        nnunet_trainer.perform_actual_validation(export_validation_probabilities, not disable_tta)
+        if postprocess:
+            nnunet_trainer.perform_actual_validation(export_validation_probabilities, not disable_tta, postprocess=True)
+        else:
+            nnunet_trainer.perform_actual_validation(export_validation_probabilities, not disable_tta)
 
 
 def run_training_entry():
@@ -231,7 +246,9 @@ def run_training_entry():
     parser.add_argument('--disable_checkpointing', action='store_true', required=False,
                         help='[OPTIONAL] Set this flag to disable checkpointing. Ideal for testing things out and '
                              'you dont want to flood your hard drive with checkpoints.')
-    parser.add_argument('--disable_tta', action='store_true', required=False, default=False,
+    parser.add_argument('--postprocess', action='store_true',
+                        help='Fit adaptive post-processing on training predictions and evaluate raw/processed validation.')
+    parser.add_argument('--disable_tta', '--disable-tta', action='store_true', required=False, default=False,
                         help='[OPTIONAL] Set this flag to disable test time data augmentation in the form of '
                              'mirroring during the final validation. Faster, but less accurate.')
     parser.add_argument('--ckpt-interval', type=int, default=50, required=False,
@@ -264,7 +281,7 @@ def run_training_entry():
     run_training(args.dataset_name_or_id, args.configuration, args.fold, args.tr, args.p, args.pretrained_weights,
                  args.num_gpus, args.npz, args.c, args.val, args.disable_checkpointing,
                  device=device, disable_tta=args.disable_tta, checkpoint_interval=args.ckpt_interval,
-                 disable_train_val=args.disable_train_val)
+                 disable_train_val=args.disable_train_val, postprocess=args.postprocess)
 
 
 if __name__ == '__main__':

@@ -535,6 +535,7 @@ def run_training_worker_process(
     checkpoint_interval: int,
     disable_train_val: bool,
     continue_training: bool = False,
+    postprocess: bool = False,
 ) -> None:
     if world_size > 1:
         dist.init_process_group("nccl", rank=rank, world_size=world_size)
@@ -556,6 +557,9 @@ def run_training_worker_process(
     )
     trainer.checkpoint_interval = checkpoint_interval
     trainer.disable_train_val = disable_train_val
+    if postprocess:
+        from nnunetv2.postprocessing.validation import check_postprocessing_prerequisites
+        check_postprocessing_prerequisites(trainer)
 
     maybe_load_checkpoint(
         trainer,
@@ -569,7 +573,10 @@ def run_training_worker_process(
         torch.backends.cudnn.benchmark = True
 
     trainer.run_training()
-    trainer.perform_actual_validation(False, not disable_tta)
+    if postprocess:
+        trainer.perform_actual_validation(False, not disable_tta, postprocess=True)
+    else:
+        trainer.perform_actual_validation(False, not disable_tta)
 
     if world_size > 1:
         dist.destroy_process_group()
@@ -585,6 +592,7 @@ def run_training_worker(
     disable_train_val: bool,
     ddp: int,
     continue_training: bool = False,
+    postprocess: bool = False,
 ) -> None:
     if ddp == 1:
         run_training_worker_process(
@@ -598,6 +606,7 @@ def run_training_worker(
             checkpoint_interval,
             disable_train_val,
             continue_training,
+            postprocess,
         )
         return
 
@@ -615,6 +624,7 @@ def run_training_worker(
             checkpoint_interval,
             disable_train_val,
             continue_training,
+            postprocess,
         ),
         nprocs=ddp,
         join=True,
@@ -631,6 +641,7 @@ def make_worker_command(
     disable_train_val: bool,
     ddp: int = 1,
     continue_training: bool = False,
+    postprocess: bool = False,
 ) -> list[str]:
     command = [
         sys.executable,
@@ -656,6 +667,8 @@ def make_worker_command(
         command.append("--disable_train_val")
     if continue_training:
         command.append("--c")
+    if postprocess:
+        command.append('--postprocess')
     return command
 
 
@@ -669,6 +682,7 @@ def launch_job(
     disable_train_val: bool,
     ddp: int,
     continue_training: bool = False,
+    postprocess: bool = False,
 ) -> subprocess.Popen:
     env = os.environ.copy()
     env["CUDA_VISIBLE_DEVICES"] = gpu
@@ -683,6 +697,7 @@ def launch_job(
             disable_train_val,
             ddp,
             continue_training,
+            postprocess,
         ),
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
@@ -727,13 +742,14 @@ def schedule_jobs(
     console: Console,
     ddp: int = 1,
     launcher: Callable[
-        [TrainingJob, str, str, str, bool, int, bool, int, bool], subprocess.Popen
+        [TrainingJob, str, str, str, bool, int, bool, int, bool, bool], subprocess.Popen
     ] = launch_job,
     monotonic: Callable[[], float] = time.monotonic,
     wall_clock: Callable[[], datetime] = datetime.now,
     sleep: Callable[[float], None] = time.sleep,
     poll_interval: float = 5.0,
     continue_training: bool = False,
+    postprocess: bool = False,
 ) -> list[FinishedJob]:
     pending = list(jobs)
     free_gpus = group_gpu_tokens(gpu_tokens, ddp)
@@ -748,7 +764,7 @@ def schedule_jobs(
         while pending and free_gpus:
             gpu = free_gpus.pop(0)
             job = pending.pop(0)
-            process = launcher(
+            launch_args = (
                 job,
                 gpu,
                 plans_file,
@@ -759,6 +775,8 @@ def schedule_jobs(
                 ddp,
                 continue_training,
             )
+            # Preserve existing launcher callbacks for disabled runs.
+            process = launcher(*launch_args, postprocess=True) if postprocess else launcher(*launch_args)
             started_at = wall_clock()
             running.append(RunningJob(job, gpu, process, monotonic(), started_at))
             log_start(console, job, gpu, started_at)
@@ -790,7 +808,8 @@ def schedule_jobs(
 
 
 def skip_validated_jobs(
-    jobs: Sequence[TrainingJob], plans_file: str, trainer_name: str, console: Console
+    jobs: Sequence[TrainingJob], plans_file: str, trainer_name: str, console: Console,
+    postprocess: bool = False,
 ) -> list[TrainingJob]:
     plans_manager = PlansManager(plans_file)
     pending = []
@@ -799,13 +818,13 @@ def skip_validated_jobs(
             nnUNet_results,
             plans_manager.dataset_name,
             f"{trainer_name}__{plans_manager.plans_name}__{job.configuration}",
-            f"fold_{job.fold}", "validation", "summary.json",
+            f"fold_{job.fold}", "validation_postprocessed" if postprocess else "validation", "summary.json",
         )
         if isfile(summary_file):
             console.print(
                 f"{format_bold_value('SKIPPED', SKIPPED_COLOR)} "
                 f"job {job.index + 1}/{job.total} — {format_job_configuration(job)} — "
-                "validation/summary.json already exists."
+                f"{'validation_postprocessed' if postprocess else 'validation'}/summary.json already exists."
             )
         else:
             pending.append(job)
@@ -893,6 +912,8 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         default=False,
         help="Disable validation loops and pseudo-Dice computation during training.",
     )
+    parser.add_argument('--postprocess', action='store_true',
+                        help='Fit training-derived adaptive post-processing before validation.')
     parser.add_argument("--worker", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--plans-file", help=argparse.SUPPRESS)
     parser.add_argument("--configuration", help=argparse.SUPPRESS)
@@ -942,6 +963,7 @@ def batch_train_entry(argv: Sequence[str] | None = None) -> int:
             args.disable_train_val,
             args.ddp,
             args.continue_training,
+            args.postprocess,
         )
         return 0
 
@@ -954,7 +976,7 @@ def batch_train_entry(argv: Sequence[str] | None = None) -> int:
         requested_configurations_from_jobs(jobs, args.exclude),
     )
     if args.continue_training:
-        jobs = skip_validated_jobs(jobs, plans_file, args.trainer, console)
+        jobs = skip_validated_jobs(jobs, plans_file, args.trainer, console, postprocess=args.postprocess)
         if not jobs:
             console.print("All jobs already have validation summaries; nothing to train.")
             return 0
@@ -986,6 +1008,7 @@ def batch_train_entry(argv: Sequence[str] | None = None) -> int:
         console,
         args.ddp,
         continue_training=args.continue_training,
+        postprocess=args.postprocess,
     )
     print_summary(console, results)
     return 1 if any(i.returncode != 0 for i in results) else 0

@@ -168,6 +168,11 @@ class ConfigurationManager(object):
         return self.configuration.get('trainer', {})
 
     @property
+    def post_processing(self) -> dict:
+        from nnunetv2.postprocessing.configuration import resolve_configuration
+        return resolve_configuration(self.configuration.get('post_processing', {}))
+
+    @property
     def pin_memory(self) -> Union[bool, None]:
         if 'pin_memory' in self.trainer:
             return self.trainer['pin_memory']

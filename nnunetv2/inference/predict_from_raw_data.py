@@ -46,10 +46,12 @@ class nnUNetPredictor(object):
                  device: torch.device = torch.device('cuda'),
                  verbose: bool = False,
                  verbose_preprocessing: bool = False,
-                 allow_tqdm: bool = True):
+                 allow_tqdm: bool = True,
+                 postprocessing_policy: Union[str, dict, None] = None):
         self.verbose = verbose
         self.verbose_preprocessing = verbose_preprocessing
         self.allow_tqdm = allow_tqdm
+        self.postprocessing_policy = postprocessing_policy
 
         self.plans_manager, self.configuration_manager, self.list_of_parameters, self.network, self.dataset_json, \
         self.trainer_name, self.allowed_mirroring_axes, self.label_manager = None, None, None, None, None, None, None, None
@@ -64,6 +66,13 @@ class nnUNetPredictor(object):
             perform_everything_on_device = False
         self.device = device
         self.perform_everything_on_device = perform_everything_on_device
+
+    def set_postprocessing_policy(self, policy):
+        """Explicit policy, applied once after fold aggregation. None disables it."""
+        from nnunetv2.postprocessing.adaptive import label_spec, load_policy
+        self.postprocessing_policy = (None if policy is None else
+                                      load_policy(policy, label_spec(self.dataset_json, self.label_manager),
+                                                  self.use_mirroring))
 
     def initialize_from_trained_model_folder(self, model_training_output_dir: str,
                                              use_folds: Union[Tuple[Union[int, str]], None],
@@ -136,6 +145,8 @@ class nnUNetPredictor(object):
         self.trainer_name = trainer_name
         self.allowed_mirroring_axes = inference_allowed_mirroring_axes
         self.label_manager = plans_manager.get_label_manager(dataset_json)
+        if self.postprocessing_policy is not None:
+            self.set_postprocessing_policy(self.postprocessing_policy)
         if ('nnUNet_compile' in os.environ.keys()) and (os.environ['nnUNet_compile'].lower() in ('true', '1', 't')) \
                 and not isinstance(self.network, OptimizedModule):
             print('Using torch.compile')
@@ -156,6 +167,8 @@ class nnUNetPredictor(object):
         self.trainer_name = trainer_name
         self.allowed_mirroring_axes = inference_allowed_mirroring_axes
         self.label_manager = plans_manager.get_label_manager(dataset_json)
+        if self.postprocessing_policy is not None:
+            self.set_postprocessing_policy(self.postprocessing_policy)
         allow_compile = True
         allow_compile = allow_compile and ('nnUNet_compile' in os.environ.keys()) and (
                     os.environ['nnUNet_compile'].lower() in ('true', '1', 't'))
@@ -404,7 +417,8 @@ class nnUNetPredictor(object):
                         export_pool.apply_async(
                             export_prediction_from_logits,
                             (prediction, properties, self.configuration_manager, self.plans_manager,
-                             self.dataset_json, ofile, save_probabilities)
+                             self.dataset_json, ofile, save_probabilities),
+                            kwds={'postprocessing_policy': self.postprocessing_policy}
                         )
                     )
                 else:
@@ -415,7 +429,8 @@ class nnUNetPredictor(object):
                             (prediction, self.plans_manager,
                              self.configuration_manager, self.label_manager,
                              properties,
-                             save_probabilities)
+                             save_probabilities),
+                            kwds={'postprocessing_policy': self.postprocessing_policy}
                         )
                     )
                 if ofile is not None:
@@ -484,14 +499,16 @@ class nnUNetPredictor(object):
         if output_file_truncated is not None:
             export_prediction_from_logits(predicted_logits, dct['data_properties'], self.configuration_manager,
                                           self.plans_manager, self.dataset_json, output_file_truncated,
-                                          save_or_return_probabilities)
+                                          save_or_return_probabilities,
+                                          postprocessing_policy=self.postprocessing_policy)
         else:
             ret = convert_predicted_logits_to_segmentation_with_correct_shape(predicted_logits, self.plans_manager,
                                                                               self.configuration_manager,
                                                                               self.label_manager,
                                                                               dct['data_properties'],
                                                                               return_probabilities=
-                                                                              save_or_return_probabilities)
+                                                                              save_or_return_probabilities,
+                                                                              postprocessing_policy=self.postprocessing_policy)
             if save_or_return_probabilities:
                 return ret[0], ret[1]
             else:
@@ -790,12 +807,12 @@ class nnUNetPredictor(object):
 
             if of is not None:
                 export_prediction_from_logits(prediction, data_properties, self.configuration_manager, self.plans_manager,
-                  self.dataset_json, of, save_probabilities)
+                  self.dataset_json, of, save_probabilities, postprocessing_policy=self.postprocessing_policy)
             else:
                 ret.append(convert_predicted_logits_to_segmentation_with_correct_shape(prediction, self.plans_manager,
                      self.configuration_manager, self.label_manager,
                      data_properties,
-                     save_probabilities))
+                     save_probabilities, postprocessing_policy=self.postprocessing_policy))
 
         # clear lru cache
         compute_gaussian.cache_clear()
@@ -816,6 +833,7 @@ def predict_entry_point_modelfolder():
                                                  'you want to manually specify a folder containing a trained nnU-Net '
                                                  'model. This is useful when the nnunet environment variables '
                                                  '(nnUNet_results) are not set.')
+    parser.add_argument('--postprocessing-policy', help='Explicit training-fitted postprocessing.json to apply.')
     parser.add_argument('-i', type=str, required=True,
                         help='input folder. Remember to use the correct channel numberings for your files (_0000 etc). '
                              'File endings must be the same as the training dataset!')
@@ -897,7 +915,8 @@ def predict_entry_point_modelfolder():
                                 device=device,
                                 verbose=args.verbose,
                                 allow_tqdm=not args.disable_progress_bar,
-                                verbose_preprocessing=args.verbose)
+                                verbose_preprocessing=args.verbose,
+                                postprocessing_policy=args.postprocessing_policy)
     predictor.initialize_from_trained_model_folder(args.m, args.f, args.chk)
     predictor.predict_from_files(args.i, args.o, save_probabilities=args.save_probabilities,
                                  overwrite=not args.continue_prediction,
@@ -919,6 +938,7 @@ def predict_entry_point():
     parser.add_argument('-o', type=str, required=True,
                         help='Output folder. If it does not exist it will be created. Predicted segmentations will '
                              'have the same name as their source images.')
+    parser.add_argument('--postprocessing-policy', help='Explicit training-fitted postprocessing.json to apply.')
     parser.add_argument('-d', type=str, required=True,
                         help='Dataset with which you would like to predict. You can specify either dataset name or id')
     parser.add_argument('-p', type=str, required=False, default='nnUNetPlans',
@@ -1014,7 +1034,8 @@ def predict_entry_point():
                                 device=device,
                                 verbose=args.verbose,
                                 verbose_preprocessing=args.verbose,
-                                allow_tqdm=not args.disable_progress_bar)
+                                allow_tqdm=not args.disable_progress_bar,
+                                postprocessing_policy=args.postprocessing_policy)
     predictor.initialize_from_trained_model_folder(
         model_folder,
         args.f,

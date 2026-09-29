@@ -13,6 +13,7 @@ from nnunetv2.configuration import default_num_processes
 from nnunetv2.imageio.base_reader_writer import BaseReaderWriter
 from nnunetv2.utilities.label_handling.label_handling import LabelManager
 from nnunetv2.utilities.plans_handling.plans_handler import PlansManager
+from nnunetv2.postprocessing.adaptive import apply_policy, label_spec, load_policy, masks_from_probabilities
 
 
 def average_probabilities(list_of_files: List[str]) -> np.ndarray:
@@ -35,12 +36,18 @@ def merge_files(list_of_files,
                 output_file_ending: str,
                 image_reader_writer: BaseReaderWriter,
                 label_manager: LabelManager,
-                save_probabilities: bool = False):
+                save_probabilities: bool = False,
+                postprocessing_policy: dict = None):
     # load the pkl file associated with the first file in list_of_files
     properties = load_pickle(list_of_files[0][:-4] + '.pkl')
     # load and average predictions
     probabilities = average_probabilities(list_of_files)
     segmentation = label_manager.convert_probabilities_to_segmentation(probabilities)
+    if postprocessing_policy is not None:
+        spec = label_spec({'labels': label_manager.label_dict,
+                           'regions_class_order': label_manager.regions_class_order}, label_manager)
+        segmentation = apply_policy(masks_from_probabilities(probabilities, spec), properties['spacing'], spec,
+                                    load_policy(postprocessing_policy, spec))
     image_reader_writer.write_seg(segmentation, output_filename_truncated + output_file_ending, properties)
     if save_probabilities:
         np.savez_compressed(output_filename_truncated + '.npz', probabilities=probabilities)
@@ -52,7 +59,8 @@ def ensemble_folders(list_of_input_folders: List[str],
                      save_merged_probabilities: bool = False,
                      num_processes: int = default_num_processes,
                      dataset_json_file_or_dict: str = None,
-                     plans_json_file_or_dict: str = None):
+                     plans_json_file_or_dict: str = None,
+                     postprocessing_policy: Union[str, dict, None] = None):
     """we need too much shit for this function. Problem is that we now have to support region-based training plus
     multiple input/output formats so there isn't really a way around this.
 
@@ -93,6 +101,8 @@ def ensemble_folders(list_of_input_folders: List[str],
 
     image_reader_writer = plans_manager.image_reader_writer_class()
     label_manager = plans_manager.get_label_manager(dataset_json)
+    if postprocessing_policy is not None:
+        postprocessing_policy = load_policy(postprocessing_policy, label_spec(dataset_json, label_manager))
 
     maybe_mkdir_p(output_folder)
     save_json(dataset_json, os.path.join(output_folder, 'dataset.json'), sort_keys=False)
@@ -107,13 +117,15 @@ def ensemble_folders(list_of_input_folders: List[str],
                 [dataset_json['file_ending']] * num_preds,
                 [image_reader_writer] * num_preds,
                 [label_manager] * num_preds,
-                [save_merged_probabilities] * num_preds
+                [save_merged_probabilities] * num_preds,
+                [postprocessing_policy] * num_preds
             )
         )
 
 
 def entry_point_ensemble_folders():
     parser = argparse.ArgumentParser()
+    parser.add_argument('--postprocessing-policy', help='Explicit adaptive policy applied once after averaging.')
     parser.add_argument('-i', nargs='+', type=str, required=True,
                         help='list of input folders')
     parser.add_argument('-o', type=str, required=True, help='output folder')
@@ -123,7 +135,7 @@ def entry_point_ensemble_folders():
                                                                                 'probabilities in separate .npz files')
 
     args = parser.parse_args()
-    ensemble_folders(args.i, args.o, args.save_npz, args.np)
+    ensemble_folders(args.i, args.o, args.save_npz, args.np, postprocessing_policy=args.postprocessing_policy)
 
 
 def ensemble_crossvalidations(list_of_trained_model_folders: List[str],
