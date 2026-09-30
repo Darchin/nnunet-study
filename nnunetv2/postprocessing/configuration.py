@@ -11,7 +11,7 @@ OPERATION_SELECTORS = {'grouping_distance': 'grouping_percentiles', 'closing_rad
 DEFAULTS = {'hyperparameter_search': 'greedy', 'grouping_percentiles': [10, 25, 50],
             'closing_percentiles': [25, 50, 90], 'filling_percentiles': [25, 50, 90],
             'size_percentiles': [1, 5, 10], 'count_percentiles': [90, 95, 100],
-            'hierarchy_repair': 'auto', 'connectivity': 26, 'aggregation': 'case'}
+            'hierarchy_repair': 'auto', 'aggregation': 'case'}
 QUANTILE_CONVENTIONS = {'instance_continuous': 'numpy linear',
                         'case_continuous': 'linear interpolation of normalized midpoint cumulative weights',
                         'counts': 'inverse empirical CDF; one observation per positive case'}
@@ -42,6 +42,8 @@ def resolve_configuration(configuration=None):
     if configuration is not None and not isinstance(configuration, dict):
         raise ValueError('post_processing must be a dictionary.')
     configuration = {} if configuration is None else configuration
+    if 'connectivity' in configuration:
+        raise ValueError('Remove post_processing.connectivity: foreground connectivity is fixed to 8 in 2D and 26 in 3D.')
     unknown = set(configuration) - DEFAULTS.keys()
     if unknown:
         raise ValueError(f'Unknown post_processing settings: {sorted(unknown)}')
@@ -52,10 +54,6 @@ def resolve_configuration(configuration=None):
                          ('hierarchy_repair', ('auto', 'parent', 'child')), ('aggregation', ('case', 'instance'))]:
         if result[key] not in allowed:
             raise ValueError(f'Invalid post_processing.{key}: expected one of {allowed}.')
-    if (isinstance(result['connectivity'], bool) or not isinstance(result['connectivity'], Integral)
-        or result['connectivity'] not in (6, 8, 18, 26)):
-        raise ValueError('post_processing.connectivity must be 6, 8, 18, or 26.')
-    result['connectivity'] = int(result['connectivity'])
     for key in OPERATION_SELECTORS.values():
         if result[key] is not None:
             result[key] = resolve_percentiles(result[key])

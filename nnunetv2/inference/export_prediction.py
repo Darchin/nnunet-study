@@ -145,12 +145,30 @@ def export_prediction_from_logits(predicted_array_or_file: Union[np.ndarray, tor
                  properties_dict)
 
 
-def export_fitting_masks(logits, properties, configuration_manager, plans_manager, dataset_json, output_path):
+def export_fitting_masks(logits, properties, configuration_manager, plans_manager, dataset_json, output_path,
+                         prediction_path=None, identity=None):
     """Worker export retaining the independent region decisions used for fitting."""
-    _, masks, _ = convert_predicted_logits_to_segmentation_with_correct_shape(
+    segmentation, masks, _ = convert_predicted_logits_to_segmentation_with_correct_shape(
         logits, plans_manager, configuration_manager, plans_manager.get_label_manager(dataset_json),
         properties, return_masks=True)
-    np.savez_compressed(output_path, masks=masks, spacing=np.asarray(properties['spacing']))
+    if prediction_path is None:
+        np.savez_compressed(output_path, masks=masks, spacing=np.asarray(properties['spacing']))
+        return
+    from pathlib import Path
+    from nnunetv2.postprocessing.runtime import store_masks, atomic_json, file_digest
+    directory = Path(output_path)
+    directory.mkdir(parents=True, exist_ok=True)
+    completion = directory / 'prediction.json'
+    completion.unlink(missing_ok=True)
+    store_masks(directory, masks, properties['spacing'])
+    path = Path(prediction_path)
+    ending = dataset_json['file_ending']
+    temporary = path.with_name(path.name[:-len(ending)] + '.tmp' + ending)
+    plans_manager.image_reader_writer_class().write_seg(segmentation, str(temporary), properties)
+    temporary.replace(path)
+    atomic_json(completion, {'identity': identity, 'mask_digest': file_digest(directory / 'masks.npy'),
+                            'geometry_digest': file_digest(directory / 'geometry.json'),
+                            'prediction_digest': file_digest(path)})
 
 
 def resample_and_save(predicted: Union[torch.Tensor, np.ndarray], target_shape: List[int], output_file: str,

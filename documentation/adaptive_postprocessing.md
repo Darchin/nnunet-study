@@ -4,7 +4,8 @@ Adaptive post-processing is disabled by default. When enabled, full-volume valid
 training cases, fits a policy against their original annotations, and freezes that policy before predicting validation
 cases. It does not affect per-epoch validation or cascade next-stage inputs.
 
-Refresh the custom fingerprint before enabling the feature. Existing preprocessing can be reused:
+Refresh the custom fingerprint before enabling the feature. Extraction recomputes all statistics with standard
+progress bars, without partial-statistics checks or migration. Existing preprocessing can be reused:
 
 ```powershell
 uv run extract_fingerprint -d 123 -fpe PercentileFingerprintExtractor
@@ -16,6 +17,22 @@ uv run batch_train -d 123 --postprocess
 Use the existing dataset/configuration/fold and trainer options for your experiment. Training accepts both
 `--disable_tta` and `--disable-tta`; batch training uses `--disable-tta`. The same TTA setting is used for training
 predictions and validation. Every enabled run fits a fresh policy using the current network, including `--val` runs.
+Compatible saved training predictions are reused, so refitting does not necessarily repeat model inference.
+
+CPU post-processing uses a persistent `spawn` process pool. Set its worker count before launching training:
+
+```powershell
+$env:nnUNet_n_post_proc = "8"
+```
+
+The default is 8; values must be positive integers. This setting is independent of `nnUNet_def_n_proc`, which continues
+to control ordinary prediction export and evaluation workers. Export workers are reused for fitting when the counts
+match. Workers evaluate competing policies together for each case, reuse immutable morphology/component results,
+and send compact metrics to the coordinator. Search decisions and case-order reductions remain deterministic.
+Plain phase headers and case progress bars cover cache checking,
+export completion, reference verification, candidate preparation, scoring, and report writing. Training prediction keeps
+standard per-case logs without a progress bar. Phase headers include region/search metadata where applicable; detailed
+trial diagnostics remain in the search report rather than being printed.
 
 ## Configuration
 
@@ -32,7 +49,6 @@ Add `post_processing` to a plans configuration to override fitting settings. The
     "size_percentiles": [1, 5, 10],
     "count_percentiles": [90, 95, 100],
     "hierarchy_repair": "auto",
-    "connectivity": 26,
     "aggregation": "case"
   }
 }
@@ -61,17 +77,21 @@ The sequence is hierarchy repair, grouping context, closing, bounded filling, hi
 size/count filtering. Grouping does not add voxels: it joins connected components whose shortest physical boundary
 voxel-center distance is at most the fitted threshold. Minimum-spanning-tree edges provide the same groups as
 thresholding the complete distance graph. Chains of short edges can group objects with widely separated endpoints.
+Prediction grouping computes the same threshold-graph membership directly using spatial buckets and bounded boundary
+queries, avoiding a complete prediction distance tree. Fingerprints retain exact annotation trees.
 Group volume sums original foreground volumes. Prediction groups are reconstructed after morphology and after ancestor
 deletion; size and count filters operate on whole groups. Deleting a parent also restricts its descendants.
 Removing a child preserves valid parent-only labels.
 Morphology additions cannot overwrite existing disjoint regions; dataset order resolves competing additions.
 
-Foreground defaults to 26-connectivity and accepts 6, 18, or 26 on volumes. Genuine 2D grids map 6 to 4-connectivity and
-18/26 to 8-connectivity; explicit 8 is accepted only for genuine 2D data. Background cavities retain full connectivity,
-independently of the foreground setting. Processing uses original-image
+Foreground connectivity is fixed to 26 on volumes and 8 on genuine 2D grids. Remove any `post_processing.connectivity`
+key from existing configurations; it is no longer accepted. Background cavities retain full connectivity.
+Processing uses original-image
 spacing: component and cavity measures are mm³ for volumes and mm² for genuine 2D images; closing radii are mm.
 NaturalImage2DIO's singleton axis with spacing 999 is excluded from physical measurements. A 2D model on volumetric
 data is still processed in 3D. Closing uses padded, spacing-aware spherical footprints and preserves existing foreground.
+It operates within groups of conservatively expanded component bounding boxes, avoiding full-image distance transforms
+when objects occupy small areas. This localization preserves the dense operation, including interacting objects and edges.
 
 Defaults propose at most four distinct candidates per operation, including disabled:
 
@@ -90,15 +110,21 @@ inverse empirical-CDF quantiles, with one observation per positive case. Cases w
 that measurement distribution. No positives disables size/count filtering; no tree distances disables grouping;
 no observed fragmentation disables closing; no cavities disables filling.
 
-Version 2 fingerprints retain raw per-case volumes, component IDs and exact distance-tree edges for every distinct
-connectivity (6/18/26 for volumes, 4/8 for genuine 2D). They also store per-case percentile tables and descriptive
+Component fingerprints retain raw per-case volumes, component IDs and exact distance-tree edges for the applicable
+full connectivity only (26 for volumes, 8 for genuine 2D). They also store per-case percentile tables and descriptive
 dataset summaries for both aggregation modes. Only raw measurements from the current fold's training identifiers
 contribute fitted thresholds; global summaries and validation annotations are never used. For each grouping candidate,
-annotation volumes and positive-case counts are regenerated from the stored tree. Refreshing older fingerprints adds
-these fields without reprocessing images. Existing version 1 saved policies must be refitted.
+annotation volumes and positive-case counts are regenerated from the stored tree. Refreshing fingerprints recomputes
+all measurements without requiring preprocessing again. Metadata contains label-definition fields directly, with no `version` or `spec`
+wrapper. Canonical annotation-content digests verify references during fitting without recomputing annotation trees.
+Extraction always scans all cases and uses standard progress bars for image statistics and component measurements.
+Existing version 1 policies and policies using 6/18-connectivity must be refitted. Compatible version 2 policies using
+full connectivity remain usable; explicit 8-connectivity policies apply only to genuine 2D grids.
 
 Requested percentile grids are retained even if they collapse to one value. Reports include duplicate candidate counts
 and size thresholds that cannot remove any observed annotation group. No automatic size-threshold substitution occurs.
+Trials with provably identical voxel effects share their score: grouping without an effective filter, and size thresholds
+at or below the smallest physical voxel volume in the training fold. Requested settings remain present in trial reports.
 
 Fragmentation evidence consists of multiple predicted components each overlapping exactly one common ground-truth
 group under the candidate grouping distance. Ambiguous matches are excluded. Shortest physical distances between fragment boundary voxel centers
@@ -122,17 +148,29 @@ repair offers no improvement. The selected policy can therefore disable every op
 
 Each fold retains:
 
+- `training/`: raw native-grid training predictions and `summary.json`, containing standard raw metrics, selected-policy
+  per-case metrics, and aggregate overall/per-region Dice for every distinct tested configuration.
+- `training/.postprocessing_cache/`: bit-packed, memory-mappable independent region masks, compact uncompressed
+  annotation arrays, geometry, content checksums, and prediction compatibility records.
+- `training/postprocessing_search.json`: fold distributions, dependent cavity measurements, tested configurations,
+  warnings, worker statistics, and search status. Its `.jsonl` sibling journals completed trials during fitting.
 - `validation/`: raw masks, raw `summary.json`, and original probabilities when `--npz` is enabled.
 - `validation_postprocessed/`: processed masks and a separate `summary.json`.
 - `postprocessing.json`: concrete thresholds, hierarchy policy, connectivity, resolved configuration, quantile conventions,
-  candidate grids, fold-specific distributions, objective scores, training identifiers, checkpoint metadata,
-  label definitions, and TTA setting.
-- `postprocessing_search.json`: evaluated settings, dependent cavity distributions, diagnostic warnings, scores,
-  and sweep-limit status.
+  candidate grids, objective scores, training identifiers, checkpoint/model identity, label definitions, and TTA setting.
+  Raw fold distributions reside in the search report to keep inference/export policy payloads small.
 
-Temporary training masks are streamed from a unique `.postprocessing-fit-*` directory. It is removed after successful
-fitting; failed runs retain their temporary data for inspection. DDP distributes training predictions and fits once on
-rank zero, with fitting progress signals sent to waiting ranks. Both raw and processed validation metrics are logged.
+Training predictions and their cache persist after successful fitting. Reuse checks actual model weights, TTA/mirroring,
+prediction configuration, input file identities, and output checksums. Missing, incomplete, corrupt, or mismatched cases
+are predicted again. Changing only fitting settings reuses predictions. Independent thresholded channels are essential:
+an exported region label map alone cannot reconstruct them. Cache files use more disk than compressed masks in return
+for fast reads; annotation source/content changes invalidate reference reuse. Older unidentified `.postprocessing-fit-*`
+directories are not automatically reused or deleted.
+
+Training summaries are in-sample results. The selected-policy metrics describe applying the policy to the saved raw
+predictions; a separate set of processed training masks is not exported. DDP distributes only pending training cases,
+keeps heartbeats active while ranks finish uneven assignments, and fits once on rank zero. Both raw and processed
+validation metrics are logged. Failed fitting retains reusable completed predictions and journaled trial results.
 
 Ordinary prediction accepts an explicit policy:
 
@@ -166,3 +204,14 @@ uv run python -m nnunetv2.tests.integration_tests.run_adaptive_postprocessing_sm
 This test reads one training case and one validation case from the real split, takes 64³ crops, fits and exports both
 validation variants through actual workers, and removes its temporary outputs. It does not modify the original
 fingerprint, preprocessing, or training results. It verifies a small real-data path rather than full-dataset performance.
+It also runs validation twice and checks that the second run reuses the training prediction.
+
+Benchmark native-grid preparation and default fitting with one and multiple CPU workers:
+
+```powershell
+uv run python -m nnunetv2.tests.integration_tests.benchmark_adaptive_postprocessing -d 226 --fold 0 --cases 4 --processes 1 4 --output benchmark.json
+```
+
+The benchmark includes the most fragmented training annotation and uses reproducibly perturbed annotations as synthetic
+predictions. It reports wall time, worker memory/time statistics, cache size, and trial/work counts, and checks policy
+equality across worker counts. It does not measure model inference or estimate held-out segmentation accuracy.

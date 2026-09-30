@@ -24,6 +24,11 @@ from nnunetv2.utilities.plans_handling.plans_handler import ConfigurationManager
 DATASET = {'labels': {'background': 0, 'lesion': 1}}
 
 
+@pytest.fixture(autouse=True)
+def lightweight_fitting(monkeypatch):
+    monkeypatch.setattr('nnunetv2.postprocessing.runtime.default_num_postprocessing_processes', 1)
+
+
 def policy(spec, **settings):
     return {'version': VERSION, 'spec': spec, 'direction': 'expand',
             'connectivity': {'foreground': 26, 'background': 'full'},
@@ -66,18 +71,18 @@ def test_bad_configuration(value):
 
 def test_configuration_defaults_inheritance_and_explicit_null():
     plans = PlansManager({'configurations': {'base': {'post_processing': {'size_percentiles': [10],
-        'connectivity': 18}}, 'child': {'inherits_from': 'base', 'post_processing': {'size_percentiles': None}},
+        'aggregation': 'instance'}}, 'child': {'inherits_from': 'base', 'post_processing': {'size_percentiles': None}},
         'replace': {'inherits_from': 'base', 'nested_override': False,
                     'post_processing': {'count_percentiles': -2}}}})
     inherited = plans._internal_resolve_configuration_inheritance('child')
-    assert inherited['post_processing'] == {'size_percentiles': None, 'connectivity': 18}
+    assert inherited['post_processing'] == {'size_percentiles': None, 'aggregation': 'instance'}
     # A complete architecture isn't needed to test the configuration property.
     config = ConfigurationManager.__new__(ConfigurationManager)
     config.configuration = inherited
     assert config.post_processing['size_percentiles'] is None
-    assert config.post_processing['connectivity'] == 18
+    assert config.post_processing['aggregation'] == 'instance'
     replaced = plans._internal_resolve_configuration_inheritance('replace')['post_processing']
-    assert resolve_configuration(replaced)['connectivity'] == 26
+    assert 'connectivity' not in resolve_configuration(replaced)
     assert resolve_configuration(replaced)['count_percentiles'] == [1, 2.5]
     config.configuration = {}
     assert config.post_processing == DEFAULTS
@@ -149,11 +154,10 @@ def test_fingerprint_variants_tables_summaries_and_empty_classes():
     reference[1, 1, 1] = reference[2, 2, 2] = 1
     spec = label_spec(DATASET)
     case = extract_case_components(reference, (1, 1, 1), spec)
-    assert set(case['connectivities']) == {'6', '18', '26'}
-    face, full = case_regions(case, 6)[0], case_regions(case, 26)[0]
-    assert face['component_ids'] == [1, 2] and full['component_ids'] == [1]
-    assert face['edges'][0][2] == pytest.approx(np.sqrt(3))
-    assert len(face['volume_percentiles']) == len(PERCENTILE_CATALOGUE)
+    assert set(case['connectivities']) == {'26'}
+    full = case_regions(case, 26)[0]
+    assert full['component_ids'] == [1]
+    assert len(full['volume_percentiles']) == len(PERCENTILE_CATALOGUE)
     assert full['distance_percentiles'] == {}
     summaries = fingerprint_summaries({'positive': case}, 1)
     assert summaries['26']['case'][0]['count_percentiles']['100.0'] == 1
@@ -293,7 +297,7 @@ def test_connectivity_8_volume_preflight_error_is_actionable():
     segmentation = np.zeros((5, 5, 5), np.uint8)
     statistics = {'component_statistics': {'metadata': component_metadata(spec), 'cases': {
         'train': extract_case_components(segmentation, (1, 1, 1), spec)}}}
-    with pytest.raises(ValueError, match='only valid for genuine 2D'):
+    with pytest.raises(ValueError, match='refresh'):
         validate_fingerprint(statistics, spec, ['train'], 8)
 
 

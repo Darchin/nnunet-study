@@ -10,6 +10,7 @@ import json
 from numbers import Integral
 from pathlib import Path
 import warnings
+import weakref
 
 import numpy as np
 from scipy import ndimage as ndi
@@ -78,7 +79,7 @@ def masks_from_probabilities(probabilities, spec):
 
 
 def masks_to_segmentation(masks, spec):
-    result = np.zeros(masks.shape[1:], dtype=np.uint16)
+    result = np.zeros(masks[0].shape, dtype=np.uint16)
     for mask, output_label in zip(masks, spec['output_labels']):
         result[mask] = output_label
     return result
@@ -104,6 +105,47 @@ def close_mask(mask, spacing, radius):
     if radius is None or radius <= 0 or not mask.any():
         return mask.copy().reshape(original_shape)
     spacing = np.asarray(spacing, dtype=float)
+    if radius < spacing.min():
+        return mask.copy().reshape(original_shape)
+    # Closing is local to interacting dilations. Expanded component boxes conservatively include
+    # touching discrete footprints; separate groups can be closed independently with identical results.
+    components, volumes = component_volumes(mask, spacing)
+    boxes = ndi.find_objects(components)
+    extent = np.ceil(radius / spacing).astype(int) + 1
+    low = np.asarray([[s.start for s in box] for box in boxes])
+    high = np.asarray([[s.stop for s in box] for box in boxes])
+    parent = np.arange(len(boxes))
+
+    def root(i):
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+
+    for i in range(len(boxes)):
+        matches = np.flatnonzero(np.all((low[i] - extent <= high[i + 1:] + extent) &
+                                        (low[i + 1:] - extent <= high[i] + extent), axis=1)) + i + 1
+        for j in matches:
+            a, b = root(i), root(j)
+            parent[max(a, b)] = min(a, b)
+    groups = {}
+    for i in range(len(boxes)):
+        groups.setdefault(root(i), []).append(i)
+    result = mask.copy()
+    for members in groups.values():
+        if len(members) == 1 and volumes[members[0]] == np.prod(spacing):
+            continue  # A singleton is unchanged by closing with any finite spherical footprint.
+        start = np.maximum(0, low[members].min(0) - extent)
+        stop = np.minimum(mask.shape, high[members].max(0) + extent)
+        crop = tuple(slice(int(a), int(b)) for a, b in zip(start, stop))
+        membership = np.zeros(len(boxes) + 1, dtype=bool)
+        membership[np.asarray(members) + 1] = True
+        local = membership[components[crop]]
+        result[crop] |= _close_dense(local, spacing, radius)
+    return result.reshape(original_shape)
+
+
+def _close_dense(mask, spacing, radius):
     extent = np.ceil(radius / spacing).astype(int)
     padding = [(int(e) + 1, int(e) + 1) for e in extent]
     padded = np.pad(mask, padding)
@@ -112,7 +154,7 @@ def close_mask(mask, spacing, radius):
     dilated = ndi.distance_transform_edt(~padded, sampling=spacing) <= radius
     closed = ndi.distance_transform_edt(dilated, sampling=spacing) > radius
     crop = tuple(slice(p, -p) for p, _ in padding)
-    return (mask | closed[crop]).reshape(original_shape)
+    return mask | closed[crop]
 
 
 class MorphologyCache:
@@ -120,10 +162,25 @@ class MorphologyCache:
     def __init__(self, max_bytes=128 * 1024 ** 2):
         self.max_bytes, self.nbytes = max_bytes, 0
         self.entries = OrderedDict()
+        self.hashes = {}
 
     def get(self, operation, mask, spacing, parameter, compute):
-        key = (operation, mask.shape, tuple(spacing), parameter,
-               hashlib.blake2b(np.ascontiguousarray(mask).view(np.uint8), digest_size=16).digest())
+        saved = self.hashes.get(id(mask)) if not mask.flags.writeable else None
+        if saved is not None and saved[0]() is mask:
+            digest = saved[1]
+        else:
+            digest = hashlib.blake2b(np.ascontiguousarray(mask).view(np.uint8), digest_size=16).digest()
+            if not mask.flags.writeable:
+                identifier = id(mask)
+                owner = weakref.ref(self)
+
+                def discard(_, key=identifier, owner=owner):
+                    cache = owner()
+                    if cache is not None:
+                        cache.hashes.pop(key, None)
+
+                self.hashes[identifier] = (weakref.ref(mask, discard), digest)
+        key = (operation, mask.shape, tuple(spacing), parameter, digest)
         if key in self.entries:
             self.entries.move_to_end(key)
             return self.entries[key]
@@ -135,6 +192,9 @@ class MorphologyCache:
                 _, (_, old_size) = self.entries.popitem(last=False)
                 self.nbytes -= old_size
             self.entries[key] = (result, size)
+            for array in arrays:
+                if isinstance(array, np.ndarray):
+                    array.flags.writeable = False
             self.nbytes += size
         return result, size
 
@@ -164,6 +224,10 @@ def repair_masks(masks, spacing, spec, settings, direction, cache=None, stop_bef
     for i in range(len(masks)):  # dataset order breaks ties between competing additions
         old = masks[i]
         radius = settings[i]['closing_radius']
+        if radius is None and (settings[i]['hole_volume'] is None or stop_before_fill == i):
+            if stop_before_fill == i:
+                return masks
+            continue
         closed = cache.value('close', old, spacing, radius, lambda: close_mask(old, spacing, radius))
         allowed = np.ones(old.shape, dtype=bool)
         for j in disjoint[i]:
@@ -190,12 +254,20 @@ def apply_policy(masks, spacing, spec, policy, cache=None):
         return masks_to_segmentation(masks, spec)
     cache = cache or MorphologyCache()
     settings = policy['settings']
-    masks = repair_masks(masks, spacing, spec, settings, policy['direction'], cache)
+    morphology = (policy['direction'], tuple(map(tuple, spec['regions'])),
+                  tuple((s['closing_radius'], s['hole_volume']) for s in settings))
+    repaired = cache.value('repair_pipeline', masks, spacing, morphology,
+                           lambda: repair_masks(masks, spacing, spec, settings, policy['direction'], cache))
+    # Filtering replaces arrays; cached morphology remains immutable and shared across threshold trials.
+    masks = list(repaired)
     parents, _, order = relations(spec)
     for i in order:
         mask = masks[i]
         if settings[i]['min_volume'] is None and settings[i]['max_count'] is None:
             continue
+        if (settings[i]['max_count'] is None and settings[i]['min_volume'] is not None
+            and settings[i]['min_volume'] <= np.prod(physical_grid(mask, spacing)[1])):
+            continue  # No component or group can be smaller than one physical foreground voxel.
         connectivity = policy['connectivity']['foreground']
         components, volumes = grouped_components(mask, spacing, connectivity,
                                                  settings[i]['grouping_distance'], cache)
@@ -206,10 +278,12 @@ def apply_policy(masks, spacing, spec, policy, cache=None):
         maximum = settings[i]['max_count']
         if maximum is not None:
             ids = ids[np.lexsort((ids, -volumes[ids - 1]))[:maximum]]
-        masks[i] = np.isin(components, ids)
+        keep = np.zeros(len(volumes) + 1, dtype=bool)
+        keep[ids] = True
+        masks[i] = keep[components]
         for child in order:
             if i in parents[child]:
-                masks[child] &= masks[i]
+                masks[child] = masks[child] & masks[i]
     return masks_to_segmentation(masks, spec)
 
 
@@ -247,17 +321,18 @@ def candidates(values, percentiles, discrete=False, scale=1.):
 
 
 def component_metadata(spec):
-    return {"version": VERSION, "spec": spec, "foreground_connectivities": [6, 18, 26],
-            "2d_connectivities": [4, 8], "background_connectivity": "full", "grid": "original",
+    return {**spec, "foreground_connectivities": [26],
+            "2d_connectivities": [8], "background_connectivity": "full", "grid": "original",
             "units": "mm^ndim", "distance_units": "mm", "distance": "shortest boundary voxel centers",
-            "percentile_catalogue": PERCENTILE_CATALOGUE, "quantiles": QUANTILE_CONVENTIONS}
+            "percentile_catalogue": PERCENTILE_CATALOGUE, "quantiles": QUANTILE_CONVENTIONS,
+            "annotation_digest": "sha256 of C-order little-endian int32 labels"}
 
 
 def extract_case_components(segmentation, spacing, spec):
     masks = masks_from_segmentation(segmentation, spec)
     grid, _ = physical_grid(segmentation, spacing)
     variants = {}
-    for connectivity in ([4, 8] if grid.ndim == 2 else [6, 18, 26]):
+    for connectivity in ([8] if grid.ndim == 2 else [26]):
         regions = []
         for mask in masks:
             _, volumes, edges = component_measurements(mask, spacing, connectivity)
@@ -266,8 +341,9 @@ def extract_case_components(segmentation, spacing, spec):
                             'edges': edges_list, 'volume_percentiles': percentile_table([volumes]),
                             'distance_percentiles': percentile_table([edges[:, 2]])})
         variants[str(connectivity)] = regions
+    from nnunetv2.postprocessing.runtime import annotation_digest
     return {'spacing': list(map(float, spacing)), 'shape': list(segmentation.shape),
-            'connectivities': variants}
+            'connectivities': variants, 'annotation_digest': annotation_digest(segmentation)}
 
 
 def case_regions(case, connectivity):
@@ -293,6 +369,30 @@ def fingerprint_summaries(cases, region_count):
     return summaries
 
 
+def component_case_is_valid(case, region_count, connectivity=26, require_digest=True):
+    try:
+        regions = case_regions(case, connectivity)
+        physical_grid(np.empty((1,) * len(case['shape']), dtype=bool), case['spacing'])
+        valid = (len(regions) == region_count and len(case['shape']) == len(case['spacing'])
+                 and all(isinstance(s, int) and s > 0 for s in case['shape']))
+        if require_digest:
+            digest = case.get('annotation_digest')
+            valid &= isinstance(digest, str) and len(digest) == 64 and all(c in '0123456789abcdef' for c in digest)
+        for region in regions:
+            volumes, edges = region['volumes'], region['edges']
+            valid &= region['component_ids'] == list(range(1, len(volumes) + 1))
+            valid &= all(np.isfinite(v) and v > 0 for v in volumes)
+            valid &= len(edges) == max(0, len(volumes) - 1)
+            valid &= all(len(e) == 3 and 1 <= e[0] < e[1] <= len(volumes)
+                         and int(e[0]) == e[0] and int(e[1]) == e[1]
+                         and np.isfinite(e[2]) and e[2] > 0 for e in edges)
+            if valid and volumes:
+                valid &= len(group_membership(np.asarray(volumes), edges, np.inf)[1]) == 1
+        return bool(valid)
+    except (KeyError, TypeError, ValueError, IndexError):
+        return False
+
+
 def validate_fingerprint(fingerprint, spec, training_ids=None, connectivity=26):
     validate_spec(spec)
     if 'ignore' in spec['labels']:
@@ -306,29 +406,7 @@ def validate_fingerprint(fingerprint, spec, training_ids=None, connectivity=26):
         raise ValueError(f'Component fingerprint lacks training cases {sorted(missing)}; refresh the fingerprint.')
     for identifier in training_ids or ():
         case = statistics['cases'][identifier]
-        if connectivity == 8 and len(case.get('shape', [])) == 3 and not (
-            case['shape'][0] == 1 and case.get('spacing', [None])[0] == 999
-        ):
-            raise ValueError('post_processing.connectivity=8 is only valid for genuine 2D grids; '
-                             'use 6, 18, or 26 for volumetric data, including 2D models.')
-        try:
-            regions = case_regions(case, connectivity)
-            physical_grid(np.empty((1,) * len(case['shape']), dtype=bool), case['spacing'])
-            valid = (len(regions) == len(spec['regions']) and len(case['shape']) == len(case['spacing'])
-                     and all(isinstance(s, int) and s > 0 for s in case['shape']))
-            for region in regions:
-                volumes, edges = region['volumes'], region['edges']
-                valid &= region['component_ids'] == list(range(1, len(volumes) + 1))
-                valid &= all(np.isfinite(v) and v > 0 for v in volumes)
-                valid &= len(edges) == max(0, len(volumes) - 1)
-                valid &= all(len(e) == 3 and 1 <= e[0] < e[1] <= len(volumes)
-                             and int(e[0]) == e[0] and int(e[1]) == e[1]
-                             and np.isfinite(e[2]) and e[2] > 0 for e in edges)
-                if valid and volumes:
-                    valid &= len(group_membership(np.asarray(volumes), edges, np.inf)[1]) == 1
-        except (KeyError, TypeError, ValueError, IndexError):
-            valid = False
-        if not valid:
+        if not component_case_is_valid(case, len(spec['regions']), connectivity):
             raise ValueError(f'Invalid component statistics for {identifier}; refresh the fingerprint.')
     return statistics
 
@@ -351,9 +429,9 @@ def mean_dice(segmentation, reference_masks, spec):
     return float(np.divide(2 * intersection, denominator, out=np.ones(len(predicted)), where=denominator > 0).mean())
 
 
-def fit_policy(case_ids, load_case, fingerprint, spec, metadata=None, progress=None, configuration=None):
+def fit_policy(case_ids, load_case, fingerprint, spec, metadata=None, progress=None, configuration=None, **kwargs):
     from nnunetv2.postprocessing.fitting import fit_policy as fit
-    return fit(case_ids, load_case, fingerprint, spec, metadata, progress, configuration)
+    return fit(case_ids, load_case, fingerprint, spec, metadata, progress, configuration, **kwargs)
 
 
 def load_policy(path_or_policy, spec, enable_tta=None):
@@ -367,8 +445,8 @@ def load_policy(path_or_policy, spec, enable_tta=None):
         raise ValueError('Saved adaptive policy version or label definitions do not match this model. '
                          'Refit post-processing with the current fingerprint and algorithm.')
     connectivity = policy.get('connectivity', {}).get('foreground')
-    if isinstance(connectivity, bool) or not isinstance(connectivity, Integral) or connectivity not in (6, 8, 18, 26):
-        raise ValueError('Saved policy has invalid foreground connectivity.')
+    if isinstance(connectivity, bool) or not isinstance(connectivity, Integral) or connectivity not in (8, 26):
+        raise ValueError('Saved policy must use full foreground connectivity (8/26). Refit post-processing.')
     if policy.get('connectivity', {}).get('background') != 'full':
         raise ValueError('Saved policy must use full cavity background connectivity.')
     if policy.get('direction') not in ('identity', 'expand', 'restrict'):

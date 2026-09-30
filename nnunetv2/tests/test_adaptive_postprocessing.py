@@ -23,6 +23,12 @@ LABELS = {'labels': {'background': 0, 'lesion': 1}, 'file_ending': '.npy'}
 NESTED = {'labels': {'background': 0, 'whole': [1, 2], 'core': 2}, 'regions_class_order': [1, 2]}
 
 
+@pytest.fixture(autouse=True)
+def lightweight_fitting(monkeypatch):
+    monkeypatch.setattr('nnunetv2.postprocessing.runtime.default_num_postprocessing_processes', 1)
+    monkeypatch.setattr('nnunetv2.postprocessing.validation.default_num_postprocessing_processes', 1)
+
+
 def policy_for(spec, direction='expand', **settings):
     return {'version': VERSION, 'spec': spec, 'direction': direction,
             'connectivity': {'foreground': 26, 'background': 'full'},
@@ -395,25 +401,25 @@ class ImmediatePool:
         return SimpleNamespace(get=lambda: value, ready=lambda: True)
 
 
-def test_fingerprint_refresh_adds_statistics_without_reextracting_images(tmp_path, monkeypatch):
+def test_complete_fingerprint_extraction_includes_component_statistics(tmp_path, monkeypatch):
     from nnunetv2.experiment_planning.dataset_fingerprint import percentile_fingerprint_extractor as module
     label = tmp_path / 'case.npy'
     segmentation = np.zeros((7, 7), np.uint8)
     segmentation[2:5, 2:5] = 1
     np.save(label, segmentation)
     existing = {'spacings': [[1, 1]], 'foreground_intensity_properties_per_channel': {'0': {'mean': 13}}}
-    monkeypatch.setattr(module.DatasetFingerprintExtractor, 'run', lambda *args: existing)
+    monkeypatch.setattr(module.DatasetFingerprintExtractor, 'run', lambda *args, **kwargs: existing)
     monkeypatch.setattr(module, 'determine_reader_writer_from_dataset_json', lambda *args: NumpyReaderWriter)
-    monkeypatch.setattr(module.multiprocessing, 'get_context', lambda *args: SimpleNamespace(Pool=ImmediatePool))
     monkeypatch.setattr(module, 'nnUNet_preprocessed', str(tmp_path))
     (tmp_path / 'Dataset001_Test').mkdir()
     extractor = module.PercentileFingerprintExtractor.__new__(module.PercentileFingerprintExtractor)
     extractor.dataset_json, extractor.dataset_name, extractor.num_processes = LABELS, 'Dataset001_Test', 1
+    extractor.show_progress_bar = True
     extractor.dataset = {'case': {'images': ['unused.npy'], 'label': str(label)}}
     refreshed = extractor.run()
     assert refreshed['foreground_intensity_properties_per_channel']['0']['mean'] == 13
     assert case_regions(refreshed['component_statistics']['cases']['case'], 26)[0]['volumes'] == [9]
-    np.save(label, np.zeros((8, 8), np.uint8))  # source size changes, triggering a refresh
+    np.save(label, np.zeros((8, 8), np.uint8))  # The next extraction recomputes the annotation measurements
     assert case_regions(extractor.run()['component_statistics']['cases']['case'], 26)[0]['volumes'] == []
 
 
@@ -428,10 +434,11 @@ def test_full_volume_validation_fits_then_exports_both_results(tmp_path, monkeyp
     logits = torch.stack((torch.where(torch.from_numpy(predicted) > 0, -10., 10.),
                           torch.where(torch.from_numpy(predicted) > 0, 10., -10.)))
     calls = []
+    tta_settings = []
 
     class Predictor:
         def __init__(self, **kwargs):
-            assert kwargs['use_mirroring'] is False
+            tta_settings.append(kwargs['use_mirroring'])
 
         def manual_initialization(self, *args):
             pass
@@ -475,7 +482,7 @@ def test_full_volume_validation_fits_then_exports_both_results(tmp_path, monkeyp
     trainer.configuration_name, trainer.fold, trainer.current_epoch = 'test', 0, 1
     trainer.label_manager = LabelManager(LABELS['labels'], None)
     trainer.configuration_manager = SimpleNamespace(spacing=[1, 1], next_stage_names=None,
-        post_processing={'hyperparameter_search': 'exhaustive', 'connectivity': 6, 'aggregation': 'instance',
+        post_processing={'hyperparameter_search': 'exhaustive', 'aggregation': 'instance',
                          'hierarchy_repair': 'parent', 'grouping_percentiles': None},
         resampling_fn_probabilities=lambda data, *args: data)
     trainer.plans_manager = SimpleNamespace(transpose_forward=[0, 1], transpose_backward=[0, 1],
@@ -491,7 +498,7 @@ def test_full_volume_validation_fits_then_exports_both_results(tmp_path, monkeyp
     assert saved_policy['training_identifiers'] == ['train']
     assert saved_policy['configuration']['hyperparameter_search'] == 'exhaustive'
     assert saved_policy['configuration']['aggregation'] == 'instance'
-    assert saved_policy['connectivity']['foreground'] == 6
+    assert saved_policy['connectivity']['foreground'] == 26
     assert not list(output.glob('.postprocessing-fit-*'))
     np.testing.assert_equal(np.load(output / 'validation' / 'val.npy'), predicted)
     np.testing.assert_equal(np.load(output / 'validation_postprocessed' / 'val.npy'), reference)
@@ -499,8 +506,19 @@ def test_full_volume_validation_fits_then_exports_both_results(tmp_path, monkeyp
     processed_summary = json.loads((output / 'validation_postprocessed' / 'summary.json').read_text())
     assert raw_summary['foreground_mean']['Dice'] < processed_summary['foreground_mean']['Dice'] == 1
     assert (output / 'validation' / 'val.npz').is_file()
-    assert (output / 'postprocessing_search.json').is_file()
+    assert (output / 'training' / 'postprocessing_search.json').is_file()
+    assert (output / 'training' / 'summary.json').is_file()
+    assert (output / 'training' / 'train.npy').is_file()
     assert any(a.args[0] == 'final_val_postprocessed/foreground_dice' for a in trainer.logger.log_summary.call_args_list)
+    trainer.perform_actual_validation(save_probabilities=False, enable_tta=False, postprocess=True)
+    assert calls == [1, 2, 2]  # Refit without predicting the compatible training case again.
+    trainer.current_epoch += 1  # Checkpoint reloads may advance the epoch counter without changing weights.
+    trainer.configuration_manager.post_processing['size_percentiles'] = [5, 10]
+    trainer.perform_actual_validation(save_probabilities=False, enable_tta=False, postprocess=True)
+    assert calls == [1, 2, 2, 2]  # Fitting configuration changes also reuse predictions.
+    trainer.perform_actual_validation(save_probabilities=False, enable_tta=True, postprocess=True)
+    assert calls == [1, 2, 2, 2, 1, 2]  # TTA changes invalidate the training prediction cache.
+    assert tta_settings == [False, False, False, True]
 
 
 def test_predictor_saved_policy_is_reused_for_returned_predictions(monkeypatch, tmp_path):

@@ -25,6 +25,7 @@ def main():
     parser.add_argument('--model-folder', required=True)
     parser.add_argument('--fold', type=int, default=0)
     parser.add_argument('--patch-size', type=int, default=64)
+    parser.add_argument('--postprocessing-processes', type=int, default=2)
     args = parser.parse_args()
     os.environ['nnUNet_compile'] = 'false'
     torch.set_num_threads(2)
@@ -95,11 +96,28 @@ def main():
         import importlib
         module = importlib.import_module('nnunetv2.training.nnUNetTrainer.nnUNetTrainer')
         module.default_num_processes = 1
-        nnUNetTrainer.perform_actual_validation(trainer, save_probabilities=True, enable_tta=False, postprocess=True)
+        from nnunetv2.postprocessing import validation
+        validation.default_num_postprocessing_processes = args.postprocessing_processes
+        original_predict = nnUNetPredictor.predict_sliding_window_return_logits
+        prediction_calls = []
+
+        def counted_prediction(self, data):
+            prediction_calls.append(tuple(data.shape))
+            return original_predict(self, data)
+
+        nnUNetPredictor.predict_sliding_window_return_logits = counted_prediction
+        try:
+            nnUNetTrainer.perform_actual_validation(trainer, save_probabilities=True, enable_tta=False, postprocess=True)
+            assert len(prediction_calls) == 2
+            nnUNetTrainer.perform_actual_validation(trainer, save_probabilities=False, enable_tta=False, postprocess=True)
+            assert len(prediction_calls) == 3  # Only validation is predicted on the second run.
+        finally:
+            nnUNetPredictor.predict_sliding_window_return_logits = original_predict
         policy = json.loads((output / 'postprocessing.json').read_text())
         assert policy['training_identifiers'] == ['training_smoke']
         assert (output / 'validation_postprocessed' / 'summary.json').is_file()
         assert (output / 'validation' / 'validation_smoke.npz').is_file()
+        assert (output / 'training' / 'summary.json').is_file()
         print('SMOKE PASSED:', json.dumps({'training_objective': policy['objective'], 'validation': metrics}), flush=True)
 
 
