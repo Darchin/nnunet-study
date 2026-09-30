@@ -1268,8 +1268,7 @@ class nnUNetTrainer(object):
             if checkpoint['grad_scaler_state'] is not None:
                 self.grad_scaler.load_state_dict(checkpoint['grad_scaler_state'])
 
-    def perform_actual_validation(self, save_probabilities: bool = False, enable_tta: bool = True,
-                                  postprocess: bool = False):
+    def perform_actual_validation(self, save_probabilities: bool = False, enable_tta: bool = True):
         self.set_deep_supervision_enabled(False)
         self.network.eval()
 
@@ -1294,13 +1293,6 @@ class nnUNetTrainer(object):
             worker_list = [i for i in segmentation_export_pool._pool]
             validation_output_folder = join(self.output_folder, 'validation')
             maybe_mkdir_p(validation_output_folder)
-            policy = None
-            processed_output_folder = None
-            if postprocess:
-                from nnunetv2.postprocessing.validation import fit_training_postprocessing
-                policy = fit_training_postprocessing(self, predictor, segmentation_export_pool, enable_tta)
-                processed_output_folder = join(self.output_folder, 'validation_postprocessed')
-                maybe_mkdir_p(processed_output_folder)
 
             # we cannot use self.get_tr_and_val_datasets() here because we might be DDP and then we have to distribute
             # the validation keys across the workers.
@@ -1356,9 +1348,7 @@ class nnUNetTrainer(object):
                     segmentation_export_pool.starmap_async(
                         export_prediction_from_logits, (
                             (prediction, properties, self.configuration_manager, self.plans_manager,
-                             self.dataset_json, output_filename_truncated, save_probabilities,
-                             default_num_processes, policy,
-                             join(processed_output_folder, k) if postprocess else None),
+                             self.dataset_json, output_filename_truncated, save_probabilities),
                         )
                     )
                 )
@@ -1433,21 +1423,6 @@ class nnUNetTrainer(object):
             self.print_to_log_file("Validation complete", also_print_to_console=True)
             self.print_to_log_file("Mean Validation Dice: ", (metrics['foreground_mean']["Dice"]),
                                    also_print_to_console=True)
-            if postprocess:
-                processed_metrics = compute_metrics_on_folder(
-                    join(self.preprocessed_dataset_folder_base, 'gt_segmentations'), processed_output_folder,
-                    join(processed_output_folder, 'summary.json'), self.plans_manager.image_reader_writer_class(),
-                    self.dataset_json['file_ending'],
-                    self.label_manager.foreground_regions if self.label_manager.has_regions else
-                    self.label_manager.foreground_labels, self.label_manager.ignore_label, chill=True,
-                    num_processes=default_num_processes * dist.get_world_size() if self.is_ddp else default_num_processes)
-                for label in processed_metrics['mean']:
-                    self.logger.log_summary(f'final_val_postprocessed/class_{label}_dice',
-                                            processed_metrics['mean'][label]['Dice'])
-                self.logger.log_summary('final_val_postprocessed/foreground_dice',
-                                        processed_metrics['foreground_mean']['Dice'])
-                self.print_to_log_file('Mean post-processed Validation Dice: ',
-                                       processed_metrics['foreground_mean']['Dice'], also_print_to_console=True)
 
         self.set_deep_supervision_enabled(self.enable_deep_supervision)
         compute_gaussian.cache_clear()

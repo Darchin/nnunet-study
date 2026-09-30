@@ -119,15 +119,6 @@ class MobileUNetPlanner(StemmedPlanner):
                     }
                 },
             },
-            "MN-2x-L": {
-                "inherits_from": "MN-2x",
-                "patch_size_multiplier": 6,
-                "architecture": {
-                    "arch_kwargs": {
-                        "channels": [64, 128, 256, 384, 640],
-                    }
-                },
-            },
             "MN-3x-S": {
                 "inherits_from": "MN-3x",
                 "patch_size_multiplier": 8,
@@ -520,20 +511,10 @@ class BraTSPlanner(MobileUNetPlanner):
     def configs(self):
         new_configs = super().configs
 
-        new_configs["MN-2x-S_Static"] = {
-            "inherits_from": ["MN-2x-S"],
-            "patch_size_multiplier": 4,
-            "trainer": {"num_epochs": 1000},
-        }
         new_configs["MN-2x-M_Static"] = {
             "inherits_from": ["MN-2x-M"],
             "patch_size_multiplier": 4,
-            "trainer": {"num_epochs": 1000},
-        }
-        new_configs["MN-2x-L_Static"] = {
-            "inherits_from": ["MN-2x-L"],
-            "patch_size_multiplier": 4,
-            "trainer": {"num_epochs": 1000},
+            "trainer": {"num_epochs": 500},
         }
 
         return new_configs
