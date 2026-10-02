@@ -1,11 +1,11 @@
 [
   {
     "configs": [
-      "MN-2x-M_Static",
-      "MN-2x-M_Dynamic"
+      "MN-4x-M_Static",
+      "MN-4x-M_Dynamic"
     ],
     "folds": [
-      0, 1, 2, 3, 4
+      1, 2, 3, 4
     ]
   }
 ]
