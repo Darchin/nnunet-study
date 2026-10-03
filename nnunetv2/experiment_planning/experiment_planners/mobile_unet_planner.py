@@ -119,21 +119,12 @@ class MobileUNetPlanner(StemmedPlanner):
                     }
                 },
             },
-            "MN-3x-S": {
-                "inherits_from": "MN-3x",
-                "patch_size_multiplier": 8,
+            "MN-2x-L": {
+                "inherits_from": "MN-2x",
+                "patch_size_multiplier": 6,
                 "architecture": {
                     "arch_kwargs": {
-                        "channels": [64, 128, 192, 320],
-                    }
-                },
-            },
-            "MN-3x-M": {
-                "inherits_from": "MN-3x",
-                "patch_size_multiplier": 8,
-                "architecture": {
-                    "arch_kwargs": {
-                        "channels": [96, 192, 288, 480],
+                        "channels": [64, 128, 256, 384, 640],
                     }
                 },
             },
