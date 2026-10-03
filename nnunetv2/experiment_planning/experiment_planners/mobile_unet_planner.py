@@ -557,9 +557,9 @@ class KiTSPlanner(BenchmarkPlanner):
     PATCH_SIZE_MULTIPLIER = 6
 
 
-class AMOSPlanner(MobileUNetPlanner):
+class AMOSPlanner(BenchmarkPlanner):
     PATCH_SIZE_MULTIPLIER = 6
 
 
-class BraTSPlanner(MobileUNetPlanner):
+class BraTSPlanner(BenchmarkPlanner):
     PATCH_SIZE_MULTIPLIER = 4
