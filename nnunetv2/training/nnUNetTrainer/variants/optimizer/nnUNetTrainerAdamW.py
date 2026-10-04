@@ -2,6 +2,15 @@ import math
 
 import torch
 
+from batchgenerators.dataloading.nondet_multi_threaded_augmenter import NonDetMultiThreadedAugmenter
+from batchgenerators.dataloading.single_threaded_augmenter import SingleThreadedAugmenter
+from nnunetv2.training.data_augmentation.custom_transforms.fast_cpu import replace_cpu_transforms
+from nnunetv2.training.data_augmentation.custom_transforms.fast_spatial import replace_spatial_transforms
+from nnunetv2.training.dataloading.data_loader import nnUNetDataLoader
+from nnunetv2.training.dataloading.nnunet_dataset import infer_dataset_class
+from nnunetv2.training.dataloading.shared_batch_augmenter import SharedBatchAugmenter
+from nnunetv2.utilities.default_n_proc_DA import get_allowed_n_proc_DA
+
 from nnunetv2.network_architecture.moe import Router
 from nnunetv2.training.nnUNetTrainer.nnUNetTrainer import nnUNetTrainer
 
@@ -213,3 +222,57 @@ class nnUNetTrainerAdamW(nnUNetTrainer):
         if self.pin_memory is not None:
             return self.pin_memory
         return super()._should_pin_memory()
+
+    @staticmethod
+    def get_training_transforms(*args, **kwargs):
+        transforms = nnUNetTrainer.get_training_transforms(*args, **kwargs)
+        return replace_spatial_transforms(replace_cpu_transforms(transforms))
+
+    @staticmethod
+    def get_validation_transforms(*args, **kwargs):
+        return replace_cpu_transforms(nnUNetTrainer.get_validation_transforms(*args, **kwargs))
+
+    def get_dataloaders(self):
+        if self.dataset_class is None:
+            self.dataset_class = infer_dataset_class(self.preprocessed_dataset_folder)
+        patch = self.configuration_manager.patch_size
+        scales = self._get_deep_supervision_scales()
+        rotation, dummy2d, initial, mirror = self.configure_rotation_dummyDA_mirroring_and_inital_patch_size()
+        common = dict(is_cascaded=self.is_cascaded, foreground_labels=self.label_manager.foreground_labels,
+                      regions=self.label_manager.foreground_regions if self.label_manager.has_regions else None,
+                      ignore_label=self.label_manager.ignore_label)
+        train_transforms = self.get_training_transforms(
+            patch, rotation, scales, mirror, dummy2d,
+            use_mask_for_norm=self.configuration_manager.use_mask_for_norm, **common)
+        val_transforms = self.get_validation_transforms(scales, **common)
+        train_dataset, val_dataset = self.get_tr_and_val_datasets()
+        loader_args = dict(
+            label_manager=self.label_manager,
+            oversample_foreground_percent=self.oversample_foreground_percent,
+            probabilistic_oversampling=self.probabilistic_oversampling)
+        train_loader = nnUNetDataLoader(train_dataset, self.batch_size, initial, patch,
+                                       transforms=train_transforms, **loader_args)
+        val_loader = nnUNetDataLoader(val_dataset, self.batch_size, patch, patch,
+                                     transforms=val_transforms, **loader_args)
+        workers = get_allowed_n_proc_DA()
+        pin = self._should_pin_memory()
+
+        def wrap(loader, n, cached):
+            if workers == 0:
+                return SingleThreadedAugmenter(loader, None)
+            if pin and self.device.type == 'cuda':
+                return SharedBatchAugmenter(loader, n, cached)
+            return NonDetMultiThreadedAugmenter(loader, None, n, cached,
+                                               pin_memory=pin, wait_time=0.002)
+
+        train = wrap(train_loader, workers, max(6, workers // 2))
+        val = wrap(val_loader, max(1, workers // 2), max(3, workers // 4))
+        try:
+            next(train)
+            next(val)
+        except Exception:
+            for augmenter in (train, val):
+                if isinstance(augmenter, NonDetMultiThreadedAugmenter):
+                    augmenter._finish(force=True)
+            raise
+        return train, val
