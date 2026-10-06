@@ -498,7 +498,8 @@ class MoENumExpertsPlanner(MobileUNetPlanner):
 
 
 class BenchmarkPlanner(MobileUNetPlanner):
-    PATCH_SIZE_MULTIPLIER = 6
+    PATCH_SIZE_MULTIPLIER_2X = 6
+    PATCH_SIZE_MULTIPLIER_4X = 6
 
     @property
     def configs(self):
@@ -508,9 +509,14 @@ class BenchmarkPlanner(MobileUNetPlanner):
         scales = ("S", "M", "L")
 
         for stride, scale in product(strides, scales):
+            if stride == 2: 
+                psm = self.PATCH_SIZE_MULTIPLIER_2X
+            else:
+                psm = self.PATCH_SIZE_MULTIPLIER_4X
+                
             new_configs[f"MN-{stride}x-{scale}_Static"] = {
                 "inherits_from": [f"MN-{stride}x-{scale}"],
-                "patch_size_multiplier": self.PATCH_SIZE_MULTIPLIER,
+                "patch_size_multiplier": psm,
                 "trainer": {"num_epochs": 1000},
             }
 
@@ -545,12 +551,15 @@ class BenchmarkPlanner(MobileUNetPlanner):
 
 
 class KiTSPlanner(BenchmarkPlanner):
-    PATCH_SIZE_MULTIPLIER = 6
+    PATCH_SIZE_MULTIPLIER_2X = 5
+    PATCH_SIZE_MULTIPLIER_4X = 6
 
 
 class AMOSPlanner(BenchmarkPlanner):
-    PATCH_SIZE_MULTIPLIER = 6
+    PATCH_SIZE_MULTIPLIER_2X = 5
+    PATCH_SIZE_MULTIPLIER_4X = 6
 
 
 class BraTSPlanner(BenchmarkPlanner):
-    PATCH_SIZE_MULTIPLIER = 4
+    PATCH_SIZE_MULTIPLIER_2X = 4
+    PATCH_SIZE_MULTIPLIER_4X = 4
